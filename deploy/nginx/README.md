@@ -1,4 +1,4 @@
-# ADHDQQ.COM nginx deployment
+# ADDFCS.COM nginx deployment
 
 Current server status checked from this workspace:
 
@@ -8,7 +8,7 @@ Current server status checked from this workspace:
 
 Prepared nginx config:
 
-- [adhdqq.com.conf](/home/sqmini/soulai/deploy/nginx/adhdqq.com.conf)
+- [addfcs.com.conf](/home/sqmini/soulai/deploy/nginx/addfcs.com.conf)
 
 ## Install nginx
 
@@ -22,8 +22,8 @@ sudo apt-get install -y nginx
 ## Deploy config
 
 ```bash
-sudo cp /home/sqmini/soulai/deploy/nginx/adhdqq.com.conf /etc/nginx/sites-available/adhdqq.com.conf
-sudo ln -sf /etc/nginx/sites-available/adhdqq.com.conf /etc/nginx/sites-enabled/adhdqq.com.conf
+sudo cp /home/sqmini/soulai/deploy/nginx/addfcs.com.conf /etc/nginx/sites-available/addfcs.com.conf
+sudo ln -sf /etc/nginx/sites-available/addfcs.com.conf /etc/nginx/sites-enabled/addfcs.com.conf
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
@@ -42,11 +42,11 @@ After DNS resolves and port `80` is reachable:
 
 ```bash
 sudo apt-get install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d adhdqq.com -d www.adhdqq.com
+sudo certbot --nginx -d addfcs.com -d www.addfcs.com
 ```
 
 ## Notes
 
 - The app currently listens on `3333`, so nginx proxies to `127.0.0.1:3333`
-- After nginx is enabled, external users should access `https://adhdqq.com` instead of `:3333`
+- After nginx is enabled, external users should access `https://addfcs.com` instead of `:3333`
 - It is better to close external access to port `3333` once nginx is in front

@@ -137,9 +137,21 @@ function hideEventCharacters() {
   eventLumen.classList.remove("visible");
 }
 
+function normalizeSpeaker(speaker) {
+  const value = String(speaker || "").trim().toLowerCase();
+  if (value === "add" || value === "애드") {
+    return "add";
+  }
+  if (value === "lumen" || value === "루멘") {
+    return "lumen";
+  }
+  return value;
+}
+
 function speakerToKorean(speaker) {
-  if (speaker === "add") return "애드";
-  if (speaker === "lumen") return "루멘";
+  const normalized = normalizeSpeaker(speaker);
+  if (normalized === "add") return "애드";
+  if (normalized === "lumen") return "루멘";
   return "";
 }
 
@@ -151,14 +163,15 @@ function renderActiveEventFrame() {
   menuView.classList.add("is-hidden");
   eventOverlay.classList.remove("hidden");
   eventBubble.classList.remove("hidden");
-  eventMeta.textContent = `${frame.label} · ${speakerToKorean(frame.speaker)}`;
+  const speaker = normalizeSpeaker(frame.speaker);
+  eventMeta.textContent = speakerToKorean(speaker);
   eventText.textContent = frame.text || "";
   hideEventCharacters();
-  const imagePath = resolveCharacterImage(frame.speaker, frame.expression);
-  if (frame.speaker === "add") {
+  const imagePath = resolveCharacterImage(speaker, frame.expression);
+  if (speaker === "add") {
     showSpeakerImage(eventAdd, imagePath, "/game/images/add.png");
     eventAdd.classList.add("visible");
-  } else if (frame.speaker === "lumen") {
+  } else if (speaker === "lumen") {
     showSpeakerImage(eventLumen, imagePath, "/game/images/lumen1.png");
     eventLumen.classList.add("visible");
   }
@@ -221,7 +234,7 @@ async function maybeStartScoreEvent() {
   }
   seenEvents.push(nextEvent.key);
   state.activeEventFrames = lines.map((line) => ({
-    speaker: line.speaker || "",
+    speaker: normalizeSpeaker(line.speaker),
     expression: line.expression || "",
     text: line.text || "",
     label: nextEvent.label

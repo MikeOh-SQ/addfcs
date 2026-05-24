@@ -113,7 +113,7 @@ function showLandingScreen() {
   result.classList.add("hidden");
   progress.textContent = "준비";
   statusText.textContent = "가운데 유지";
-  hint.textContent = "시작하기를 누르면 새 화면에서 검사 시작";
+  hint.textContent = "시작하기를 누르면 새 화면에서 과제 시작";
   setStartButtonVisible(true);
   setGuideButtonVisible(true);
   setArenaVisible(false);

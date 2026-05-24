@@ -268,3 +268,54 @@ body {
     top: 40%;
   }
 }
+
+html.dtx-embed-html,
+body.dtx-embed-body {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+body.dtx-embed-body .app {
+  width: 100%;
+  min-height: 100%;
+  height: 100%;
+  padding: 14px;
+  overflow: hidden;
+  background: transparent;
+}
+
+body.dtx-embed-body .bg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+body.dtx-embed-body .topbar {
+  width: 100%;
+  margin: 0 0 12px;
+}
+
+body.dtx-embed-body .menu-view {
+  width: 100%;
+  min-height: calc(100% - 84px);
+  margin: 0;
+}
+
+body.dtx-embed-body .hero {
+  padding: 18px;
+  margin-bottom: 12px;
+}
+
+body.dtx-embed-body .menu-grid {
+  gap: 10px;
+}
+
+body.dtx-embed-body .icon-card {
+  padding: 16px 10px;
+}

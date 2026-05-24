@@ -25,7 +25,17 @@ window.DtxCommon = (() => {
     return params.get("id")?.trim() || "";
   }
 
+  function getRecordFileNameFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("file")?.trim() || "";
+  }
+
   async function loadLatestRecordById(userId) {
+    const fileName = getRecordFileNameFromUrl();
+    if (fileName) {
+      return api(`/api/records/${encodeURIComponent(fileName)}`);
+    }
+
     if (!userId) {
       return null;
     }
@@ -127,7 +137,20 @@ window.DtxCommon = (() => {
   }
 
   function buildUrl(pathname, userId) {
-    return userId ? `${pathname}?id=${encodeURIComponent(userId)}` : pathname;
+    const url = new URL(pathname, window.location.origin);
+    const params = new URLSearchParams(window.location.search);
+    if (userId) {
+      url.searchParams.set("id", userId);
+    }
+    const fileName = params.get("file")?.trim();
+    const currentUserId = params.get("id")?.trim() || "";
+    if (fileName && (!userId || userId === currentUserId)) {
+      url.searchParams.set("file", fileName);
+    }
+    if (params.get("embed") === "1") {
+      url.searchParams.set("embed", "1");
+    }
+    return `${url.pathname}${url.search}`;
   }
 
   function escapeHtml(value) {
@@ -323,15 +346,15 @@ window.DtxCommon = (() => {
       .dtx-scale-fit-root {
         position: absolute !important;
         left: 50%;
-        top: 50%;
+        top: var(--scale-fit-root-top, 50%);
         margin: 0 !important;
         width: var(--scale-fit-base-width-px) !important;
-        height: var(--scale-fit-base-height-px) !important;
+        height: var(--scale-fit-root-height-px, var(--scale-fit-base-height-px)) !important;
         min-height: 0 !important;
         max-width: none !important;
         max-height: none !important;
-        transform: translate(-50%, -50%) scale(var(--scale-fit-scale, 1));
-        transform-origin: center center;
+        transform: translate(-50%, var(--scale-fit-root-translate-y, -50%)) scale(var(--scale-fit-scale, 1));
+        transform-origin: center var(--scale-fit-root-transform-origin-y, center);
         overflow: hidden;
       }
 
@@ -340,6 +363,48 @@ window.DtxCommon = (() => {
       .dtx-scale-fit-root .event-overlay {
         position: absolute !important;
         inset: 0 !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function ensureEmbedStyle() {
+    if (document.getElementById("dtx-embed-style")) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = "dtx-embed-style";
+    style.textContent = `
+      html.dtx-embed-html,
+      body.dtx-embed-body {
+        width: 100%;
+        height: 100%;
+        min-height: 100%;
+        margin: 0;
+        overflow-x: hidden;
+        background: transparent !important;
+      }
+
+      body.dtx-embed-body {
+        min-height: 100dvh;
+      }
+
+      body.dtx-embed-body .app {
+        width: 100%;
+        min-height: 100dvh;
+        background: transparent !important;
+      }
+
+      body.dtx-embed-body .app[data-scale-fit] {
+        height: 100dvh;
+      }
+
+      body.dtx-embed-body .bg {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
       }
     `;
     document.head.appendChild(style);
@@ -370,12 +435,24 @@ window.DtxCommon = (() => {
     root.classList.add("dtx-scale-fit-root");
     root.style.setProperty("--scale-fit-base-width-px", `${baseWidth}px`);
     root.style.setProperty("--scale-fit-base-height-px", `${baseHeight}px`);
+    root.style.setProperty("--scale-fit-root-height-px", `${baseHeight}px`);
+    root.style.setProperty("--scale-fit-root-top", "50%");
+    root.style.setProperty("--scale-fit-root-translate-y", "-50%");
+    root.style.setProperty("--scale-fit-root-transform-origin-y", "center");
 
     const update = () => {
       const viewportWidth = Math.max(window.innerWidth || 0, 1);
       const viewportHeight = Math.max(window.innerHeight || 0, 1);
-      const scale = Math.min(viewportWidth / baseWidth, viewportHeight / baseHeight);
+      const widthScale = viewportWidth / baseWidth;
+      const containScale = Math.min(widthScale, viewportHeight / baseHeight);
+      const hasExtraVerticalSpace = viewportHeight > baseHeight * widthScale;
+      const scale = hasExtraVerticalSpace ? widthScale : containScale;
+      const rootHeight = hasExtraVerticalSpace ? Math.max(baseHeight, viewportHeight / scale) : baseHeight;
       root.style.setProperty("--scale-fit-scale", String(scale));
+      root.style.setProperty("--scale-fit-root-height-px", `${rootHeight}px`);
+      root.style.setProperty("--scale-fit-root-top", hasExtraVerticalSpace ? "0" : "50%");
+      root.style.setProperty("--scale-fit-root-translate-y", hasExtraVerticalSpace ? "0" : "-50%");
+      root.style.setProperty("--scale-fit-root-transform-origin-y", hasExtraVerticalSpace ? "top" : "center");
     };
 
     let resizeFrame = 0;
@@ -397,6 +474,13 @@ window.DtxCommon = (() => {
   }
 
   function initScaleFitRoots() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("embed") === "1") {
+      ensureEmbedStyle();
+      document.documentElement.classList.add("dtx-embed-html");
+      document.body.classList.add("dtx-embed-body");
+      return;
+    }
     const roots = document.querySelectorAll("[data-scale-fit]");
     roots.forEach((root) => {
       const spec = parseScaleFitSpec(root.getAttribute("data-scale-fit"));
@@ -414,6 +498,7 @@ window.DtxCommon = (() => {
     STAGE_THRESHOLDS,
     api,
     getUserIdFromUrl,
+    getRecordFileNameFromUrl,
     loadLatestRecordById,
     computeStageByScore,
     ensureDtx,

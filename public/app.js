@@ -15,12 +15,27 @@ const state = {
   isGeneratingDsmAnalysis: false,
   isGeneratingReactivityAnalysis: false,
   loadUserId: "",
+  pendingResumeFileName: "",
+  pendingResumeRoute: "",
   showExistingIdForm: false,
+  idOnboardingStep: "greeting",
+  showSurveyDifference: false,
   showAdminModal: false,
   showJsonModal: false,
+  showThemeModal: false,
   jsonModalContent: "",
   statusMessage: "",
+  designThemes: [],
+  activeThemeSlug: "",
+  activeTheme: null,
+  themeFontScaleEnabled: false,
   gameUi: null,
+  hubTrend: {
+    id: "",
+    loading: false,
+    records: [],
+    error: ""
+  },
   reportProfileTab: "inattention",
   showAsrsExamples: false,
   isAdvancingAsrs: false,
@@ -30,23 +45,24 @@ const state = {
 };
 
 const routes = [
-  { key: "intro", label: "ID", icon: "info" },
-  { key: "asrs", label: "SELF", icon: "quiz" },
-  { key: "dsm", label: "SYM", icon: "checklist" },
-  { key: "game", label: "REACT", icon: "neurology" },
-  { key: "report", label: "RESULT", icon: "analytics" },
-  { key: "plan", label: "PLAN", icon: "event_note" }
+  { key: "hub", label: "홈", icon: "home" },
+  { key: "asrs", label: "간단", icon: "quiz" },
+  { key: "dsm", label: "심층", icon: "checklist" },
+  { key: "game", label: "반응", icon: "neurology" },
+  { key: "report", label: "기록", icon: "analytics" }
 ];
 
 const app = document.querySelector("#app");
 const bottomNav = document.querySelector("#bottom-nav");
 const topbarActions = document.querySelector("#topbar-actions");
+const themeNameplate = document.querySelector("#theme-nameplate");
+const THEME_FONT_SCALE_STORAGE_KEY = "soulai-theme-font-scale-enabled";
 const GAME_ORDER = ["signal_detection", "go_nogo", "balance_hold"];
 const GAME_META = {
   signal_detection: {
     title: "신호 찾기",
     eyebrow: "signal detection",
-    domain: "부주의 측정",
+    domain: "집중 유지 과제",
     description: "파란 별이 나올때만 화면을 클릭합니다.",
     practiceTrials: 6,
     mainTrials: 60
@@ -54,7 +70,7 @@ const GAME_META = {
   go_nogo: {
     title: "멈춤 버튼",
     eyebrow: "go / no-go",
-    domain: "충동성 측정",
+    domain: "반응 조절 과제",
     description: "동그라미만 정해진 영역에서 클릭합니다.",
     practiceTrials: 8,
     mainTrials: 50
@@ -62,7 +78,7 @@ const GAME_META = {
   balance_hold: {
     title: "균형 유지",
     eyebrow: "balance hold",
-    domain: "과잉행동 / 자기조절 측정",
+    domain: "움직임 조절 과제",
     description: "중앙 영역 안에 공을 머물게 합니다.",
     durationMs: 30000
   }
@@ -99,6 +115,7 @@ const GO_NOGO_STIMULUS_IMAGES = {
   nogo: `${GO_NOGO_IMAGE_BASE_PATH}/x.gif`
 };
 const IMAGE_ASSET_VERSION = "2";
+state.introImageSrc = getRandomIntroImageSrc();
 const SIGNAL_DISTRACTOR_IMAGES = [1, 2, 3, 4, 5].map((index) => ({
   stimulusType: "non-target",
   variant: index,
@@ -122,12 +139,32 @@ const gameRuntime = {
 init();
 
 async function init() {
-  await Promise.all([loadConfigs(), loadRecords(), loadAiStatus()]);
+  hydrateThemePreferences();
+  await Promise.all([
+    loadConfigs(),
+    loadRecords(),
+    loadAiStatus(),
+    loadDesignThemes().catch((error) => {
+      console.warn("Design theme loading skipped:", error);
+      state.designThemes = [];
+      state.activeThemeSlug = "";
+      state.activeTheme = null;
+      applyDesignTheme(null);
+    })
+  ]);
   const shortcut = await applyShortcutRouteFromUrl();
   if (shortcut?.route && ["report", "plan"].includes(shortcut.route) && state.currentRecord) {
     await ensureInsights().catch((error) => setStatus(error.message));
   }
   render();
+}
+
+function hydrateThemePreferences() {
+  try {
+    state.themeFontScaleEnabled = window.localStorage.getItem(THEME_FONT_SCALE_STORAGE_KEY) === "true";
+  } catch (error) {
+    state.themeFontScaleEnabled = false;
+  }
 }
 
 function getShortcutRouteSpec() {
@@ -137,7 +174,7 @@ function getShortcutRouteSpec() {
   const test = String(params.get("test") || "").trim().toLowerCase();
   const userId = String(params.get("id") || "").trim();
   const selectedTest = GAME_ORDER.includes(test) ? test : "";
-  const validRoutes = new Set(["intro", "id", "asrs", "asrs-result", "dsm", "dsm-result", "game", "report", "plan"]);
+  const validRoutes = new Set(["intro", "id", "hub", "asrs", "asrs-result", "dsm", "dsm-result", "game", "report", "plan"]);
 
   if (shortcut === "reactivity") {
     return { route: "game", test: selectedTest, userId, gamePhase: "overview" };
@@ -174,7 +211,7 @@ function applyGameShortcutUi(shortcut) {
       };
       return;
     }
-    setStatus("완료 화면으로 바로 가려면 먼저 반응성 테스트 완료 기록이 필요합니다.");
+    setStatus("완료 화면으로 바로 가려면 먼저 반응성 과제 완료 기록이 필요합니다.");
   }
 
   resetGameUi();
@@ -195,7 +232,7 @@ async function applyShortcutRouteFromUrl() {
     }
   }
 
-  if (["asrs", "asrs-result", "dsm", "dsm-result", "game", "report", "plan"].includes(shortcut.route)) {
+  if (["hub", "asrs", "asrs-result", "dsm", "dsm-result", "game", "report", "plan"].includes(shortcut.route)) {
     if (!state.currentRecord) {
       ensureGuestGameRecord();
     }
@@ -236,6 +273,190 @@ async function loadRecords() {
 
 async function loadAiStatus() {
   state.aiStatus = await api("/api/ai/status");
+}
+
+async function loadDesignThemes() {
+  const payload = await api("/api/design-themes");
+  state.designThemes = Array.isArray(payload?.themes) ? payload.themes : [];
+
+  if (!state.designThemes.length) {
+    state.activeThemeSlug = "";
+    state.activeTheme = null;
+    applyDesignTheme(null);
+    return;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const requestedSlug = String(params.get("theme") || "").trim().toLowerCase();
+  const resolvedSlug = state.designThemes.some((theme) => theme.slug === requestedSlug)
+    ? requestedSlug
+    : payload.defaultThemeSlug || state.designThemes[0].slug;
+
+  await selectDesignTheme(resolvedSlug, { replaceHistory: true });
+}
+
+function pickFirstToken(theme, candidates, fallback = "") {
+  for (const key of candidates) {
+    const value = theme?.resolved?.colors?.[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return fallback;
+}
+
+function setThemeCssVar(name, value) {
+  if (!value) {
+    return;
+  }
+  document.documentElement.style.setProperty(name, value);
+}
+
+function applyThemeTypographyScale(theme) {
+  const typography = theme?.resolved?.typography || {};
+  const enabled = state.themeFontScaleEnabled;
+
+  setThemeCssVar("--theme-brand-title-size", enabled ? (typography["title-sm"]?.fontSize || "1.05rem") : "1.05rem");
+  setThemeCssVar("--theme-brand-title-letter-spacing", enabled ? (typography["title-sm"]?.letterSpacing || "0.02em") : "0.02em");
+  setThemeCssVar("--theme-brand-subtitle-size", enabled ? (typography.caption?.fontSize || "0.54rem") : "0.54rem");
+  setThemeCssVar("--theme-brand-subtitle-letter-spacing", enabled ? (typography["label-uppercase"]?.letterSpacing || "0.18em") : "0.18em");
+  setThemeCssVar("--theme-nav-label-size", enabled ? (typography["label-uppercase"]?.fontSize || "9px") : "9px");
+  setThemeCssVar("--theme-nav-label-letter-spacing", enabled ? (typography["label-uppercase"]?.letterSpacing || "0.08em") : "0.08em");
+  setThemeCssVar("--theme-eyebrow-size", enabled ? (typography["label-uppercase"]?.fontSize || "10px") : "10px");
+  setThemeCssVar("--theme-eyebrow-letter-spacing", enabled ? (typography["label-uppercase"]?.letterSpacing || "0.1em") : "0.1em");
+  setThemeCssVar("--theme-title-xl-size", enabled ? (typography["display-lg"]?.fontSize || "clamp(1.55rem, 6.4vw, 2.8rem)") : "clamp(1.55rem, 6.4vw, 2.8rem)");
+  setThemeCssVar("--theme-title-xl-line-height", enabled ? (typography["display-lg"]?.lineHeight || "1.02") : "1.02");
+  setThemeCssVar("--theme-title-xl-letter-spacing", enabled ? (typography["display-lg"]?.letterSpacing || "-0.03em") : "-0.03em");
+  setThemeCssVar("--theme-title-lg-size", enabled ? (typography["title-lg"]?.fontSize || "clamp(1.22rem, 4.8vw, 1.9rem)") : "clamp(1.22rem, 4.8vw, 1.9rem)");
+  setThemeCssVar("--theme-title-lg-line-height", enabled ? (typography["title-lg"]?.lineHeight || "1.1") : "1.1");
+  setThemeCssVar("--theme-title-lg-letter-spacing", enabled ? (typography["title-lg"]?.letterSpacing || "-0.02em") : "-0.02em");
+  setThemeCssVar("--theme-body-md-size", enabled ? (typography["body-md"]?.fontSize || "0.93rem") : "0.93rem");
+  setThemeCssVar("--theme-body-md-line-height", enabled ? (typography["body-md"]?.lineHeight || "1.45") : "1.45");
+  setThemeCssVar("--theme-button-size", enabled ? (typography.button?.fontSize || "0.92rem") : "0.92rem");
+  setThemeCssVar("--theme-button-letter-spacing", enabled ? (typography.button?.letterSpacing || "0") : "0");
+  setThemeCssVar("--theme-button-ghost-size", enabled ? (typography.button?.fontSize || "0.88rem") : "0.88rem");
+  setThemeCssVar("--theme-question-size", enabled ? (typography["title-md"]?.fontSize || "clamp(1.05rem, 4.1vw, 1.45rem)") : "clamp(1.05rem, 4.1vw, 1.45rem)");
+  setThemeCssVar("--theme-question-line-height", enabled ? (typography["title-md"]?.lineHeight || "1.38") : "1.38");
+  setThemeCssVar("--theme-question-letter-spacing", enabled ? (typography["title-md"]?.letterSpacing || "-0.02em") : "-0.02em");
+}
+
+function applyDesignTheme(theme) {
+  const root = document.documentElement;
+  if (!theme) {
+    root.removeAttribute("data-design-theme");
+    if (themeNameplate) {
+      themeNameplate.textContent = "";
+    }
+    return;
+  }
+
+  const colors = theme.resolved?.colors || {};
+  const typography = theme.resolved?.typography || {};
+  const rounded = theme.resolved?.rounded || {};
+  const components = theme.resolved?.components || {};
+
+  const canvas = colors.canvas || "#131313";
+  const surface = colors["surface-soft"] || colors["surface-card"] || "#1b1b1b";
+  const surfaceCard = colors["surface-card"] || "#1f1f1f";
+  const surfaceElevated = colors["surface-elevated"] || colors["surface-card"] || "#2a2a2a";
+  const text = colors["body-strong"] || colors.ink || colors.primary || "#e2e2e2";
+  const textStrong = colors.primary || colors.ink || "#ffffff";
+  const muted = colors.body || colors.muted || "#bbbbbb";
+  const accent = pickFirstToken(
+    theme,
+    ["green-accent", "signal-green", "m-red", "primary", "starbucks-green", "mint", "bmw-blue", "cobalt"],
+    "#ffacea"
+  );
+  const accentStrong = pickFirstToken(
+    theme,
+    ["house-green", "mint", "m-blue-dark", "soft-purple", "electric-blue", "secondary", "deep-cobalt"],
+    "#f67adf"
+  );
+  const secondary = pickFirstToken(
+    theme,
+    ["gold", "green-light", "m-blue-light", "soft-purple", "emerald", "bmw-blue", "cobalt", "secondary"],
+    "#c2c1ff"
+  );
+  const secondaryText = colors["on-primary"] || colors["on-dark"] || colors.canvas || "#1900a7";
+  const success = colors.success || "#0fa336";
+  const warning = colors.warning || "#f4b400";
+  const brandStripe = `linear-gradient(90deg, ${secondary} 0 34%, ${accentStrong} 34% 67%, ${accent} 67% 100%)`;
+
+  setThemeCssVar("--theme-canvas", canvas);
+  setThemeCssVar("--theme-surface", surface);
+  setThemeCssVar("--theme-surface-card", surfaceCard);
+  setThemeCssVar("--theme-surface-elevated", surfaceElevated);
+  setThemeCssVar("--theme-surface-soft", colors["surface-soft"] || canvas);
+  setThemeCssVar("--theme-text", text);
+  setThemeCssVar("--theme-text-strong", textStrong);
+  setThemeCssVar("--theme-muted", muted);
+  setThemeCssVar("--theme-hairline", colors.hairline || "rgba(255,255,255,0.08)");
+  setThemeCssVar("--theme-hairline-strong", colors["hairline-strong"] || colors.hairline || "rgba(255,255,255,0.14)");
+  setThemeCssVar("--theme-accent", accent);
+  setThemeCssVar("--theme-accent-strong", accentStrong);
+  setThemeCssVar("--theme-secondary", secondary);
+  setThemeCssVar("--theme-secondary-text", secondaryText);
+  setThemeCssVar("--theme-success", success);
+  setThemeCssVar("--theme-warning", warning);
+  setThemeCssVar("--theme-display-font", typography["display-lg"]?.fontFamily || typography["title-lg"]?.fontFamily || '"Plus Jakarta Sans", sans-serif');
+  setThemeCssVar("--theme-body-font", typography["body-md"]?.fontFamily || '"Inter", sans-serif');
+  setThemeCssVar("--theme-label-font", typography["label-uppercase"]?.fontFamily || typography.button?.fontFamily || '"Space Grotesk", sans-serif');
+  applyThemeTypographyScale(theme);
+  setThemeCssVar("--theme-radius-panel", components["feature-photo-card"]?.rounded || rounded.md || "1.75rem");
+  setThemeCssVar("--theme-radius-card", components["spec-cell"]?.rounded || rounded.sm || "1rem");
+  setThemeCssVar("--theme-radius-input", components["text-input"]?.rounded || rounded.sm || "0.9rem");
+  setThemeCssVar("--theme-radius-stage", components["model-card"]?.rounded || rounded.md || "2rem");
+  setThemeCssVar("--theme-radius-full", rounded.full || "999px");
+  setThemeCssVar("--theme-radius-button", components["button-primary"]?.rounded || rounded.full || "999px");
+  setThemeCssVar("--theme-radius-chip", components["button-icon"]?.rounded || rounded.full || "999px");
+  setThemeCssVar("--theme-shadow-ambient", canvas === "#000000" ? "0 12px 42px rgba(0, 0, 0, 0.36)" : "0 4px 48px rgba(226, 226, 226, 0.06)");
+  setThemeCssVar("--theme-button-bg", components["button-primary"]?.backgroundColor || "linear-gradient(135deg, var(--theme-accent), var(--theme-accent-strong))");
+  setThemeCssVar("--theme-button-text", components["button-primary"]?.textColor || secondaryText);
+  setThemeCssVar("--theme-button-secondary-bg", components["button-primary-outline"]?.backgroundColor === "transparent" ? surfaceElevated : (components["button-on-light"]?.backgroundColor || secondary));
+  setThemeCssVar("--theme-button-secondary-text", components["button-primary-outline"]?.textColor || textStrong);
+  setThemeCssVar("--theme-button-ghost-bg", components["button-icon"]?.backgroundColor || surfaceElevated);
+  setThemeCssVar("--theme-button-ghost-text", components["text-link"]?.textColor || accent);
+  setThemeCssVar("--theme-progress-bg", surfaceElevated);
+  setThemeCssVar("--theme-progress-fill", "linear-gradient(90deg, var(--theme-secondary), var(--theme-accent-strong), var(--theme-accent))");
+  setThemeCssVar("--theme-overlay", "rgba(0, 0, 0, 0.72)");
+  setThemeCssVar("--theme-brand-stripe", brandStripe);
+  root.setAttribute("data-design-theme", theme.slug);
+
+  if (themeNameplate) {
+    themeNameplate.textContent = theme.name || "";
+  }
+}
+
+function updateThemeFontScalePreference(enabled) {
+  state.themeFontScaleEnabled = Boolean(enabled);
+  try {
+    window.localStorage.setItem(THEME_FONT_SCALE_STORAGE_KEY, String(state.themeFontScaleEnabled));
+  } catch (error) {
+    console.warn("Unable to persist theme font scale preference:", error);
+  }
+
+  applyThemeTypographyScale(state.activeTheme);
+  render();
+}
+
+async function selectDesignTheme(slug, options = {}) {
+  if (!slug) {
+    return;
+  }
+  const theme = await api(`/api/design-themes/${encodeURIComponent(slug)}`);
+  state.activeThemeSlug = theme.slug;
+  state.activeTheme = theme;
+  applyDesignTheme(theme);
+
+  const params = new URLSearchParams(window.location.search);
+  params.delete("theme");
+  const query = params.toString();
+  const nextUrl = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+  if (options.replaceHistory) {
+    window.history.replaceState({}, "", nextUrl);
+  } else {
+    window.history.pushState({}, "", nextUrl);
+  }
 }
 
 async function api(url, options) {
@@ -402,7 +623,7 @@ function getDsmAnswers(record = state.currentRecord) {
 }
 
 function normalizeCurrentStep(step) {
-  return step === "asar" ? "asrs" : step;
+  return step === "asar" ? "asrs" : step === "id" ? "hub" : step;
 }
 
 function findLatestRecordById(userId) {
@@ -415,12 +636,15 @@ async function syncCurrentStep(route) {
     return;
   }
 
-  const flowSteps = new Set(["asrs", "asrs-result", "dsm", "dsm-result", "game", "report", "plan"]);
+  const flowSteps = new Set(["hub", "asrs", "asrs-result", "dsm", "dsm-result", "game", "report", "plan"]);
   if (!flowSteps.has(route)) {
     return;
   }
 
   state.currentRecord.currentStep = route;
+  if (route === "plan") {
+    state.currentRecord.completedPlanOnce = true;
+  }
   await persistRecord();
 }
 
@@ -434,24 +658,24 @@ function analyzeAsrs(record = state.currentRecord) {
   const attentionPositive = positiveFlags.slice(0, 4).filter(Boolean).length;
   const hyperPositive = positiveFlags.slice(4).filter(Boolean).length;
   const isComplete = answers.length === 6;
-  const severity = totalPositive >= 4 ? "비교적 높음" : "관찰 필요";
+  const severity = totalPositive >= 4 ? "뚜렷함" : "살펴볼 만함";
 
-  let summary = "현재 응답만으로는 뚜렷한 자가보고 선별 신호가 많지 않습니다.";
+  let summary = "현재 응답만으로는 주의·집중 어려움이 크게 두드러지지는 않습니다.";
   if (totalPositive >= 4) {
-    summary = "자가보고 선별에서 유의미한 문항이 4개 이상으로 나타나 추가 평가를 고려할 만한 패턴입니다.";
+    summary = "간단 자기점검에서 주의·집중 또는 실행 기능 부담이 비교적 크게 나타났습니다.";
   } else if (totalPositive >= 2) {
-    summary = "자가보고 선별에서 일부 주의집중 또는 실행기능 관련 어려움이 관찰되어 맥락을 함께 볼 필요가 있습니다.";
+    summary = "간단 자기점검에서 일부 주의·집중 또는 실행 기능 관련 어려움이 나타나 생활 맥락을 함께 살펴볼 만합니다.";
   }
 
   const attentionMessage = attentionPositive
-    ? `주의력 결핍 관련 문항 4개 중 ${attentionPositive}개가 기준 이상입니다. 집중 유지, 마감 관리, 시작 지연에서 어려움이 나타날 수 있습니다.`
-    : "주의력 결핍 관련 문항은 현재 기준 이상 응답이 많지 않습니다.";
+    ? `집중 유지와 일 시작 관련 문항 4개 중 ${attentionPositive}개에서 부담이 표시됐습니다. 마감 관리, 시작 지연, 끝까지 붙잡기에서 어려움이 나타날 수 있습니다.`
+    : "집중 유지와 일 시작 관련 문항에서는 부담 응답이 많지 않습니다.";
   const hyperMessage = hyperPositive
-    ? `과잉행동·충동성 관련 문항 2개 중 ${hyperPositive}개가 기준 이상입니다. 오래 앉아 있기 어렵거나 대화 중 끼어드는 양상이 함께 있을 수 있습니다.`
-    : "과잉행동·충동성 관련 문항은 현재 기준 이상 응답이 많지 않습니다.";
+    ? `반응 조절 관련 문항 2개 중 ${hyperPositive}개에서 부담이 표시됐습니다. 오래 앉아 있기 어렵거나 대화 중 먼저 반응하는 양상이 함께 있을 수 있습니다.`
+    : "반응 조절 관련 문항에서는 부담 응답이 많지 않습니다.";
   const guidance = totalPositive >= 4
-    ? "이 검사는 선별 도구이며 확진 검사가 아닙니다. 다만 현재 패턴은 비교적 뚜렷하므로 필요하면 CAT, DIVA-5, 임상 면담 같은 정밀 평가를 받아보는 것이 도움이 될 수 있습니다."
-    : "이 검사는 선별 도구이며 확진 검사가 아닙니다. 현재 어려움은 스트레스, 수면 부족, 불안·우울 같은 다른 요인과도 겹칠 수 있으니 지속되면 전문가 상담을 고려해 보세요.";
+    ? "이 내용은 의학적 진단이 아니라 자기점검 참고 자료예요. 다음 반응성 과제에서 목표를 찾고 멈추는 수행 패턴도 함께 살펴볼게요."
+    : "이 내용만으로 단정하지는 않아요. 다음 반응성 과제를 통해 설문에서 느낀 점과 실제 수행 패턴이 비슷한지 이어서 확인해 볼게요.";
 
   return {
     answers,
@@ -482,33 +706,33 @@ function analyzeDsm(record = state.currentRecord) {
   const completedCount = answers.length;
   const isComplete = completedCount === totalQuestions;
 
-  let subtype = "판정 보류";
-  let summary = "아직 증상 기준 체크 응답이 충분하지 않아 임시 집계만 표시합니다.";
-  let detail = "최근 6개월 동안의 반복 패턴을 기준으로 끝까지 응답하면 유형 분류를 확인할 수 있습니다.";
+  let subtype = "패턴 확인 중";
+  let summary = "아직 세부 점검 응답이 충분하지 않아 현재까지의 흐름만 표시합니다.";
+  let detail = "최근 6개월 동안의 반복 패턴을 기준으로 끝까지 응답하면 어느 영역의 부담이 큰지 볼 수 있습니다.";
 
   if (isComplete) {
     if (inattentionYes >= 6 && hyperactivityYes >= 6) {
-      subtype = "복합형 가능성";
-      summary = "부주의와 과잉행동·충동성 영역이 모두 기준 이상으로 나타났습니다.";
-      detail = "집중 유지의 어려움과 빠른 반응/안절부절함이 함께 관찰되는 패턴입니다.";
+      subtype = "복합 실행 기능 패턴";
+      summary = "집중 유지와 반응 조절 영역의 부담이 함께 크게 나타났습니다.";
+      detail = "집중을 유지하는 어려움과 빠른 반응/안절부절함이 함께 보이는 패턴입니다.";
     } else if (inattentionYes >= 6) {
-      subtype = "부주의형 가능성";
-      summary = "부주의 영역 응답이 기준 이상으로 더 두드러집니다.";
+      subtype = "집중 유지 부담 패턴";
+      summary = "집중 유지와 정리·마무리 관련 부담이 더 두드러집니다.";
       detail = "집중, 정리, 기억, 과제 마무리와 관련된 어려움이 상대적으로 크게 보입니다.";
     } else if (hyperactivityYes >= 6) {
-      subtype = "과잉행동·충동형 가능성";
-      summary = "과잉행동·충동성 영역 응답이 기준 이상으로 더 두드러집니다.";
+      subtype = "반응 조절 부담 패턴";
+      summary = "반응 조절과 기다림 관련 부담이 더 두드러집니다.";
       detail = "안절부절함, 즉각 반응, 기다리기 어려움과 같은 패턴이 상대적으로 크게 보입니다.";
     } else {
-      subtype = "무증상 범위";
-      summary = "현재 증상 기준 체크에서는 뚜렷한 유형 신호는 크지 않습니다.";
-      detail = "지금 응답만으로는 특정 유형 가능성이 기준 이상으로 모이지 않았습니다.";
+      subtype = "큰 부담 낮음";
+      summary = "현재 세부 점검에서는 특정 영역의 부담이 크게 모이지 않았습니다.";
+      detail = "지금 응답만으로는 한 영역으로 뚜렷하게 몰리는 패턴이 크지 않습니다.";
     }
   } else {
     const inattentionGap = Math.max(6 - inattentionYes, 0);
     const hyperactivityGap = Math.max(6 - hyperactivityYes, 0);
-    summary = `현재까지 부주의 ${inattentionYes}개, 과잉행동·충동성 ${hyperactivityYes}개가 Yes입니다.`;
-    detail = `기준까지는 부주의 ${inattentionGap}개, 과잉행동·충동성 ${hyperactivityGap}개의 Yes 응답이 더 필요합니다.`;
+    summary = `현재까지 집중 유지 영역 ${inattentionYes}개, 반응 조절 영역 ${hyperactivityYes}개가 체크됐습니다.`;
+    detail = `패턴을 더 안정적으로 보려면 집중 유지 ${inattentionGap}개, 반응 조절 ${hyperactivityGap}개의 추가 응답을 더 확인해야 합니다.`;
   }
 
   return {
@@ -521,31 +745,31 @@ function analyzeDsm(record = state.currentRecord) {
     subtype,
     summary,
     detail,
-    guidance: "본 결과는 진단이 아니라 현재 상태를 참고하기 위한 선별 결과입니다."
+    guidance: "이 내용은 의학적 진단이 아니라 현재 일상 패턴을 이해하기 위한 참고 자료예요. 다음 반응성 과제에서 실제 수행 패턴도 함께 확인해 볼게요."
   };
 }
 
 function buildLocalDsmQuickAnalysis(record = state.currentRecord) {
   const analysis = analyzeDsm(record);
-  let subtypeText = "현재 응답만으로는 기준 분류를 확정하기보다 전체 맥락을 함께 보는 것이 적절합니다.";
+  let subtypeText = "현재 응답만으로는 한 방향으로 단정하기보다 전체 생활 맥락을 함께 보는 것이 적절합니다.";
   if (analysis.isComplete) {
-    if (analysis.subtype === "복합형 가능성") {
-      subtypeText = "부주의와 과잉행동·충동성 신호가 함께 나타나 두 영역을 같이 살펴볼 필요가 있습니다.";
-    } else if (analysis.subtype === "부주의형 가능성") {
+    if (analysis.subtype === "복합 실행 기능 패턴") {
+      subtypeText = "집중 유지와 반응 조절 부담이 함께 나타나 두 영역을 같이 살펴볼 필요가 있습니다.";
+    } else if (analysis.subtype === "집중 유지 부담 패턴") {
       subtypeText = "집중 유지, 정리, 기억, 마무리와 관련된 어려움이 상대적으로 더 두드러집니다.";
-    } else if (analysis.subtype === "과잉행동·충동형 가능성") {
-      subtypeText = "즉각 반응, 안절부절함, 기다리기 어려움과 같은 신호가 상대적으로 더 두드러집니다.";
+    } else if (analysis.subtype === "반응 조절 부담 패턴") {
+      subtypeText = "즉각 반응, 안절부절함, 기다리기 어려움과 같은 패턴이 상대적으로 더 두드러집니다.";
     } else {
-      subtypeText = "현재 응답에서는 증상 기준 체크상 뚜렷한 유형 신호가 크게 모이지 않았습니다.";
+      subtypeText = "현재 응답에서는 한 영역으로 뚜렷하게 몰리는 부담이 크게 보이지 않습니다.";
     }
   }
 
   return {
     summary: analysis.summary,
     subtype: analysis.subtype,
-    inattention: `부주의 문항은 ${analysis.inattentionYes} / 9개가 Yes입니다. ${analysis.inattentionYes >= 6 ? "선별 기준 이상으로 관찰됩니다." : "기준 이상으로 보려면 추가 Yes 응답이 더 필요합니다."}`,
-    hyperactivity: `과잉행동·충동성 문항은 ${analysis.hyperactivityYes} / 9개가 Yes입니다. ${analysis.hyperactivityYes >= 6 ? "선별 기준 이상으로 관찰됩니다." : "기준 이상으로 보려면 추가 Yes 응답이 더 필요합니다."}`,
-    guidance: `${subtypeText} 본 결과는 진단이 아니라 현재 상태를 참고하기 위한 선별 결과입니다.`
+    inattention: `집중 유지 문항은 ${analysis.inattentionYes} / 9개가 체크됐습니다. ${analysis.inattentionYes >= 6 ? "일상에서 집중 유지 부담이 비교적 크게 나타난 편입니다." : "현재 응답만으로는 집중 유지 부담이 크게 모였다고 보기는 어렵습니다."}`,
+    hyperactivity: `반응 조절 문항은 ${analysis.hyperactivityYes} / 9개가 체크됐습니다. ${analysis.hyperactivityYes >= 6 ? "일상에서 기다림이나 멈춤 조절 부담이 비교적 크게 나타난 편입니다." : "현재 응답만으로는 반응 조절 부담이 크게 모였다고 보기는 어렵습니다."}`,
+    guidance: `${subtypeText} 이 내용은 의학적 진단이 아니라 참고용 자기점검 리포트예요. 다음 반응성 과제에서 실제 수행 패턴도 함께 확인해 볼게요.`
   };
 }
 
@@ -555,14 +779,14 @@ function buildLocalReactivityAnalysis(record = state.currentRecord) {
   const signal = game?.tests?.signal_detection;
   const goNogo = game?.tests?.go_nogo;
   const balance = game?.tests?.balance_hold;
-  const fallbackMessage = "이번 테스트에서는 충분한 데이터가 수집되지 않아 이 영역 해석은 보조적으로만 참고해 주세요.";
+  const fallbackMessage = "이번 과제에서는 충분한 데이터가 수집되지 않아 이 영역 해석은 보조적으로만 참고해 주세요.";
 
-  let inattention = "신호 찾기 결과가 아직 없어 부주의 관련 반응 지표를 해석할 수 없습니다.";
+  let inattention = "신호 찾기 결과가 아직 없어 집중 유지 관련 수행 패턴을 해석할 수 없습니다.";
   if (signal) {
     if (signal.validity?.valid === false) {
       inattention = fallbackMessage;
     } else if (signal.level_summary?.overall === "high") {
-      inattention = `목표를 놓치는 비율과 반응시간 흔들림이 함께 커 보여 주의 유지가 자주 끊기는 패턴을 의심해 볼 수 있습니다. 목표 놓침은 ${roundTo((signal.omission_rate || 0) * 100, 1)}% 수준입니다.`;
+      inattention = `목표를 놓치는 비율과 반응시간 흔들림이 함께 커 보여 집중 유지가 자주 끊기는 패턴으로 볼 수 있습니다. 목표 놓침은 ${roundTo((signal.omission_rate || 0) * 100, 1)}% 수준입니다.`;
     } else if (signal.level_summary?.overall === "moderate") {
       inattention = `간헐적인 목표 놓침이나 반응시간 흔들림이 보여 집중 유지 일관성을 함께 볼 필요가 있습니다. 목표 놓침은 ${roundTo((signal.omission_rate || 0) * 100, 1)}% 수준입니다.`;
     } else {
@@ -570,13 +794,13 @@ function buildLocalReactivityAnalysis(record = state.currentRecord) {
     }
   }
 
-  let impulsivity = "멈춤 버튼 결과가 아직 없어 충동성 관련 반응 지표를 해석할 수 없습니다.";
+  let impulsivity = "멈춤 버튼 결과가 아직 없어 반응 억제 관련 수행 패턴을 해석할 수 없습니다.";
   if (goNogo) {
     const commissionRate = roundTo((goNogo.commission_rate || goNogo.inhibition_failure_rate || 0) * 100, 1);
     if (goNogo.validity?.valid === false) {
       impulsivity = fallbackMessage;
     } else if (goNogo.level_summary?.overall === "high") {
-      impulsivity = `멈춰야 할 자극에서 반응하는 비율이 높아 억제 조절 어려움이 비교적 뚜렷하게 관찰됩니다. 잘못된 반응은 ${commissionRate}% 수준입니다.`;
+      impulsivity = `멈춰야 할 자극에서 반응하는 비율이 높아 반응 억제 과제에서 실수가 자주 나타났습니다. 잘못된 반응은 ${commissionRate}% 수준입니다.`;
     } else if (goNogo.level_summary?.overall === "moderate") {
       impulsivity = `참아야 할 자극에 가끔 반응하는 패턴이 있어 반응 억제를 함께 볼 필요가 있습니다. 잘못된 반응은 ${commissionRate}% 수준입니다.`;
     } else {
@@ -584,7 +808,7 @@ function buildLocalReactivityAnalysis(record = state.currentRecord) {
     }
   }
 
-  let hyperactivity = "균형 유지 결과가 아직 없어 활동성 관련 지표를 해석할 수 없습니다.";
+  let hyperactivity = "균형 유지 결과가 아직 없어 움직임 조절 관련 수행 패턴을 해석할 수 없습니다.";
   if (balance) {
     if (balance.validity?.valid === false) {
       hyperactivity = fallbackMessage;
@@ -599,11 +823,11 @@ function buildLocalReactivityAnalysis(record = state.currentRecord) {
 
   return {
     source: "local",
-    summary: summary.summary || "반응성 테스트 3종 결과가 저장되었습니다.",
+    summary: summary.summary || "반응성 과제 3종 기록이 저장되었습니다.",
     inattention,
     impulsivity,
     hyperactivity,
-    guidance: "반응성 테스트는 짧은 수행 과제 기반의 보조 지표이므로, 자가보고와 증상 기준 체크 결과를 함께 보고 해석하는 것이 적절합니다."
+    guidance: "반응성 과제는 짧은 수행 기반의 보조 자료이므로, 자가점검 응답과 생활 맥락을 함께 보고 해석하는 것이 적절합니다. 의학적 진단을 대신하지 않습니다."
   };
 }
 
@@ -752,7 +976,11 @@ function buildPersistedRecord(record = state.currentRecord) {
     dsm5QuickAnalysis: record.dsm5QuickAnalysis || null,
     reactivityAnalysis: record.reactivityAnalysis || null,
     report: record.report || null,
-    plan: record.plan || { suggestions: [], chat: [] }
+    plan: record.plan || { suggestions: [], chat: [] },
+    dtx: record.dtx || null,
+    planGame: record.planGame || null,
+    tutorials: record.tutorials || null,
+    completedPlanOnce: Boolean(record.completedPlanOnce || record.currentStep === "plan" || record.plan?.suggestions?.length)
   };
 }
 
@@ -761,19 +989,43 @@ function renderTopbarActions() {
     return;
   }
 
+  const shouldShowHubButton = Boolean(
+    state.currentRecord
+      && (state.currentRecord.completedPlanOnce || state.currentRecord.currentStep === "plan" || state.currentRecord.plan?.suggestions?.length)
+  );
+
   topbarActions.innerHTML = `
-    <button class="button-ghost topbar-button" type="button" id="open-json-modal">JSON 보기</button>
+    ${shouldShowHubButton ? `<button class="button-ghost topbar-button" type="button" id="topbar-hub-button">허브로 가기</button>` : ""}
+    <button class="button-ghost topbar-button" type="button" id="open-json-modal">기록</button>
   `;
+
+  topbarActions.querySelector("#topbar-hub-button")?.addEventListener("click", () => {
+    navTo("hub");
+  });
+
+  topbarActions.querySelector("#open-theme-modal")?.addEventListener("click", () => {
+    openThemeModal();
+  });
 
   topbarActions.querySelector("#open-json-modal")?.addEventListener("click", () => {
     openJsonModal().catch((error) => setStatus(error.message));
   });
 }
 
+function openThemeModal() {
+  state.showThemeModal = true;
+  render();
+}
+
+function closeThemeModal() {
+  state.showThemeModal = false;
+  render();
+}
+
 async function openJsonModal() {
   if (!state.currentRecord?.fileName) {
     state.jsonModalContent = JSON.stringify({
-      message: "아직 생성되거나 불러온 검사 기록이 없습니다."
+      message: "아직 생성되거나 불러온 자기점검 기록이 없습니다."
     }, null, 2);
     state.showJsonModal = true;
     render();
@@ -837,8 +1089,13 @@ function navTo(route) {
     resetGameUi();
   }
 
-  if (["asrs", "asrs-result", "dsm", "dsm-result", "report", "plan"].includes(route) && !state.currentRecord) {
+  if (["hub", "asrs", "asrs-result", "dsm", "dsm-result", "report", "plan"].includes(route) && !state.currentRecord) {
     requireRecord(route);
+    return;
+  }
+
+  if (route === "dtx" && !state.currentRecord) {
+    requireRecord("hub");
     return;
   }
 
@@ -853,16 +1110,32 @@ async function handleCreateId(event) {
   event.preventDefault();
   const userId = new FormData(event.currentTarget).get("userId");
   state.currentRecord = createEmptyRecord(String(userId || ""));
+  state.currentRecord.currentStep = "id";
   state.showAsrsExamples = false;
   state.isAdvancingAsrs = false;
   state.isAdvancingDsm = false;
+  state.idOnboardingStep = "survey-choice";
+  state.showSurveyDifference = false;
   await persistRecord();
+  state.records = await api("/api/records");
   setStatus(`${state.currentRecord.fileName} 생성 완료`);
-  navTo("asrs");
+  render();
 }
 
 async function handleLoadRecord(fileName) {
   state.currentRecord = await api(`/api/records/${fileName}`);
+  const normalizedLoadedStep = normalizeCurrentStep(state.currentRecord.currentStep || "id");
+  const shouldRestorePlanReached = !state.currentRecord.completedPlanOnce
+    && getGameState(state.currentRecord)?.status === "completed"
+    && ["asrs", "asrs-result", "dsm", "dsm-result"].includes(normalizedLoadedStep)
+    && !state.currentRecord.report
+    && !state.currentRecord.plan?.suggestions?.length;
+  state.currentRecord.completedPlanOnce = Boolean(
+    state.currentRecord.completedPlanOnce
+      || state.currentRecord.currentStep === "plan"
+      || state.currentRecord.plan?.suggestions?.length
+      || shouldRestorePlanReached
+  );
   if (!state.currentRecord.tests.asrs && state.currentRecord.tests.asar) {
     state.currentRecord.tests.asrs = state.currentRecord.tests.asar;
   }
@@ -879,11 +1152,26 @@ async function handleLoadRecord(fileName) {
   state.isAdvancingDsm = false;
   state.asrsIndex = Math.min(getAsrsAnswers(state.currentRecord).length, state.configs.asrs.questions.length - 1);
   state.dsmIndex = Math.min(getDsmAnswers(state.currentRecord).length, state.configs.dsm.questions.length - 1);
+  if (shouldRestorePlanReached) {
+    await persistRecord();
+  }
   setStatus(`${fileName} 불러오기 완료`);
-  navTo(normalizeCurrentStep(state.currentRecord.currentStep || "id"));
-  if (["report", "plan"].includes(normalizeCurrentStep(state.currentRecord.currentStep || "id"))) {
+  let nextRoute = normalizeCurrentStep(state.currentRecord.currentStep || "id");
+  if (nextRoute === "game" && hasCompletedReactivity(state.currentRecord) && !state.currentRecord.report) {
+    nextRoute = "report";
+  }
+  navTo(nextRoute);
+  if (["report", "plan"].includes(nextRoute)) {
     ensureInsights().catch((error) => setStatus(error.message));
   }
+}
+
+function getResumeRoute(record) {
+  const normalized = normalizeCurrentStep(record?.currentStep || "hub");
+  if (record?.plan?.suggestions?.length || normalized === "plan") {
+    return "hub";
+  }
+  return normalized;
 }
 
 async function submitManualLoad(event) {
@@ -899,7 +1187,30 @@ async function submitManualLoad(event) {
     return;
   }
 
-  await handleLoadRecord(record.fileName);
+  const resumeRoute = getResumeRoute(record);
+  if (resumeRoute === "hub") {
+    await handleLoadRecord(record.fileName);
+    navTo("hub");
+    return;
+  }
+
+  state.pendingResumeFileName = record.fileName;
+  state.pendingResumeRoute = resumeRoute;
+  state.idOnboardingStep = "resume-confirm";
+  state.showExistingIdForm = false;
+  render();
+}
+
+async function continuePendingResume() {
+  if (!state.pendingResumeFileName) {
+    setStatus("이어갈 기록을 찾지 못했습니다.");
+    return;
+  }
+  const route = state.pendingResumeRoute || "hub";
+  await handleLoadRecord(state.pendingResumeFileName);
+  state.pendingResumeFileName = "";
+  state.pendingResumeRoute = "";
+  navTo(route);
 }
 
 function toggleExistingIdForm() {
@@ -1266,7 +1577,7 @@ async function startCountdownForTest(testKey) {
     activeTestKey: testKey,
     stage: "countdown",
     countdown: 3,
-    message: "검사 시작 전 규칙을 다시 확인하세요.",
+    message: "과제 시작 전 규칙을 다시 확인하세요.",
     progressPercent: (game.currentTestIndex / GAME_ORDER.length) * 100
   });
 
@@ -1347,24 +1658,24 @@ function summarizeReactivity(record = state.currentRecord) {
 
   const parts = [];
   if (Number.isFinite(inattentionScore)) {
-    parts.push(`부주의 신호 ${inattentionScore}점`);
+    parts.push(`집중 유지 지표 ${inattentionScore}점`);
   }
   if (Number.isFinite(impulsivityScore)) {
-    parts.push(`충동성 신호 ${impulsivityScore}점`);
+    parts.push(`반응 조절 지표 ${impulsivityScore}점`);
   }
   if (Number.isFinite(activityScore)) {
-    parts.push(`활동성 신호 ${activityScore}점`);
+    parts.push(`움직임 조절 지표 ${activityScore}점`);
   }
 
   const sorted = [
-    { key: "부주의", value: inattentionScore },
-    { key: "충동성", value: impulsivityScore },
-    { key: "활동성", value: activityScore }
+    { key: "집중 유지", value: inattentionScore },
+    { key: "반응 조절", value: impulsivityScore },
+    { key: "움직임 조절", value: activityScore }
   ].filter((item) => Number.isFinite(item.value)).sort((a, b) => b.value - a.value);
 
-  let summary = "반응성 테스트 3종 결과가 저장되었습니다.";
+  let summary = "반응성 과제 3종 기록이 저장되었습니다.";
   if (sorted.length) {
-    summary = `${sorted[0].key} 관련 신호가 상대적으로 더 높게 관찰되며, ${parts.join(", ")} 수준입니다.`;
+    summary = `${sorted[0].key} 관련 지표가 상대적으로 더 높게 관찰되며, ${parts.join(", ")} 수준입니다.`;
   }
 
   const highlights = [];
@@ -1393,7 +1704,7 @@ function summarizeReactivity(record = state.currentRecord) {
       label: "Go 반응시간",
       value: `${nogo.mean_go_reaction_time || 0}ms`,
       note: nogo.level_summary?.pattern === "mixed"
-        ? "주의 저하 혼합 패턴"
+      ? "집중 유지 혼합 패턴"
         : nogo.level_summary?.pattern === "impulsive"
           ? "충동적 반응 패턴"
           : "억제 조절 참고용",
@@ -1473,7 +1784,7 @@ function runSignalDetectionTrials(trials, stage) {
           stage: "practice-complete",
           result: {
             title: "연습 완료",
-            interpretation: "규칙을 확인했습니다. 이제 본 검사 60문항을 시작합니다."
+            interpretation: "규칙을 확인했습니다. 이제 본 과제 60문항을 시작합니다."
           },
           progressPercent: (getGameState().currentTestIndex / GAME_ORDER.length) * 100
         });
@@ -2271,7 +2582,7 @@ function startBalanceHold(inputSource, mode = "main") {
           stage: "practice-complete",
           result: {
             title: "연습 완료",
-            interpretation: `이제 본 검사 30초를 시작합니다. ${getBalanceInputDescription(inputSource, false)}`
+            interpretation: `이제 본 과제 30초를 시작합니다. ${getBalanceInputDescription(inputSource, false)}`
           },
           progressPercent: (getGameState().currentTestIndex / GAME_ORDER.length) * 100
         });
@@ -2566,6 +2877,80 @@ async function ensureInsights() {
   }
 }
 
+function hasCompletedReactivity(record = state.currentRecord) {
+  return getGameState(record)?.status === "completed";
+}
+
+function getPostSurveyAction(record = state.currentRecord) {
+  if (hasCompletedReactivity(record)) {
+    return {
+      route: "report",
+      label: "다시 분석하기"
+    };
+  }
+  return {
+    route: "game",
+          label: "반응성 과제 진행하기"
+  };
+}
+
+async function forceRegenerateInsights() {
+  if (!state.currentRecord) {
+    return;
+  }
+  state.currentRecord.report = null;
+  state.currentRecord.plan = { suggestions: [], chat: [] };
+  state.currentRecord.currentStep = "report";
+  await persistRecord();
+  state.route = "report";
+  await generateReportAndPlan();
+}
+
+async function retakeAssessment(type) {
+  if (!state.currentRecord) {
+    return;
+  }
+
+  state.currentRecord.completedPlanOnce = Boolean(
+    state.currentRecord.completedPlanOnce
+      || state.currentRecord.currentStep === "plan"
+      || state.currentRecord.plan?.suggestions?.length
+  );
+  state.currentRecord.report = null;
+  state.currentRecord.plan = { suggestions: [], chat: [] };
+
+  if (type === "asrs") {
+    state.currentRecord.tests.asrs = [];
+    state.currentRecord.asrsAnalysis = null;
+    state.asrsIndex = 0;
+    state.showAsrsExamples = false;
+    state.currentRecord.currentStep = "asrs";
+    await persistRecord();
+    navTo("asrs");
+    return;
+  }
+
+  if (type === "dsm") {
+    state.currentRecord.tests.dsm5 = [];
+    state.currentRecord.dsm5Analysis = null;
+    state.currentRecord.dsm5QuickAnalysis = null;
+    state.dsmIndex = 0;
+    state.currentRecord.currentStep = "dsm";
+    await persistRecord();
+    navTo("dsm");
+    return;
+  }
+
+  if (type === "game") {
+    state.currentRecord.tests.game = createEmptyGameState();
+    state.currentRecord.reactivityAnalysis = null;
+    resetGameUi();
+    state.currentRecord.currentStep = "game";
+    await persistRecord();
+    navTo("game");
+  }
+}
+
 function toPercent(value, total) {
   if (!total) {
     return 0;
@@ -2616,6 +3001,8 @@ async function openReviewRoute(routeKey) {
     ? "asrs-result"
     : routeKey === "dsm"
       ? "dsm-result"
+      : routeKey === "hub"
+        ? "hub"
       : routeKey === "report"
         ? "report"
         : routeKey === "plan"
@@ -2636,7 +3023,258 @@ async function openReviewRoute(routeKey) {
 }
 
 function getDsmImageSrc(index) {
-  return `/dsmimages/d${index + 1}.png?v=${IMAGE_ASSET_VERSION}`;
+  return `/newimages/d${index + 1}.png?v=${IMAGE_ASSET_VERSION}`;
+}
+
+function getAsrsImageSrc(index) {
+  return `/newimages/a${index + 1}.png?v=${IMAGE_ASSET_VERSION}`;
+}
+
+function getRandomIntroImageSrc() {
+  const imagePool = [
+    ...Array.from({ length: 6 }, (_, index) => `/newimages/a${index + 1}.png?v=${IMAGE_ASSET_VERSION}`),
+    ...Array.from({ length: 23 }, (_, index) => `/newimages/d${index + 1}.png?v=${IMAGE_ASSET_VERSION}`)
+  ];
+  return imagePool[Math.floor(Math.random() * imagePool.length)] || getAsrsImageSrc(0);
+}
+
+function renderAddGuide(text, options = {}) {
+  const tone = options.tone || "차분하게 안내할게요.";
+  return `
+    <div class="add-guide ${options.compact ? "add-guide-compact" : ""}">
+      <img class="add-sticker" src="/newimages/basic.png?v=${IMAGE_ASSET_VERSION}" alt="안내 캐릭터 애드" />
+      <div class="add-bubble">
+        <span>${tone}</span>
+        <strong>${text}</strong>
+      </div>
+    </div>
+  `;
+}
+
+function buildHubSummary(record = state.currentRecord) {
+  if (!record) {
+    return "아직 진행 기록이 없어요. 먼저 ID를 만들고 간단한 점검을 시작해 주세요.";
+  }
+  const report = record.report ? computeLocalReportViewModel(record) : null;
+  const game = getGameState(record);
+  if (report?.hero?.summary) {
+    return report.hero.summary;
+  }
+  if (game?.status === "completed") {
+    return "자기점검과 반응성 과제가 완료됐어요. 패턴 리포트에서 현재 흐름을 다시 살펴볼 수 있어요.";
+  }
+  return "자가점검을 시작했어요. 설문과 반응성 과제를 마치면 현재 주의·집중 패턴을 더 구체적으로 볼 수 있어요.";
+}
+
+function getDtxEmbedSrc(record = state.currentRecord) {
+  const id = encodeURIComponent(record?.id || "guest");
+  const fileName = encodeURIComponent(record?.fileName || "");
+  return `/dtx?id=${id}&file=${fileName}&embed=1`;
+}
+
+function getHubDtxStatus(record = state.currentRecord) {
+  const dtx = record?.dtx || {};
+  const scores = dtx.scores || {};
+  const derivedScore = Object.values(scores).reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalScore = Number(dtx.totalScore ?? derivedScore);
+  const stageSpec = typeof window.DtxCommon?.computeStageByScore === "function"
+    ? window.DtxCommon.computeStageByScore(totalScore)
+    : { stage: dtx.stage || "stage1", image: "/game/images/stage1.png" };
+  return {
+    level: stageSpec.stage || dtx.stage || "stage1",
+    score: totalScore,
+    image: stageSpec.image || "/game/images/stage1.png"
+  };
+}
+
+function renderHubActionButton({ label, icon, statusLabel, hasData, attrs, extraClass = "" }) {
+  return `
+    <button class="hub-test-button ${extraClass}" type="button" ${attrs}>
+      <span class="hub-action-main">
+        <span class="material-symbols-outlined hub-action-icon">${icon}</span>
+        <span>${label}</span>
+      </span>
+      <span class="hub-action-status ${hasData ? "has-data" : ""}" aria-label="${statusLabel}">
+        <span class="material-symbols-outlined">${hasData ? "check_circle" : "radio_button_unchecked"}</span>
+      </span>
+    </button>
+  `;
+}
+
+function getHubTrendMetas(record = state.currentRecord) {
+  const id = record?.id || "";
+  if (!id) {
+    return [];
+  }
+  const byFileName = new Map();
+  state.records
+    .filter((item) => item.id === id && item.fileName)
+    .forEach((item) => byFileName.set(item.fileName, item));
+  if (record?.fileName) {
+    byFileName.set(record.fileName, {
+      fileName: record.fileName,
+      id: record.id,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      currentStep: record.currentStep
+    });
+  }
+  return [...byFileName.values()]
+    .filter((item) => item.createdAt || item.updatedAt)
+    .sort((a, b) => String(b.createdAt || b.updatedAt).localeCompare(String(a.createdAt || a.updatedAt)))
+    .slice(0, 5);
+}
+
+async function ensureHubTrendData(record = state.currentRecord) {
+  const id = record?.id || "";
+  if (!id || state.hubTrend.loading) {
+    return;
+  }
+  const metas = getHubTrendMetas(record);
+  const key = `${id}:${metas.map((item) => item.fileName).join("|")}`;
+  if (state.hubTrend.id === key) {
+    return;
+  }
+
+  state.hubTrend = {
+    id: key,
+    loading: true,
+    records: [],
+    error: ""
+  };
+  render();
+
+  try {
+    const records = await Promise.all(metas.map(async (item) => {
+      if (item.fileName === record?.fileName) {
+        return record;
+      }
+      return api(`/api/records/${encodeURIComponent(item.fileName)}`);
+    }));
+    state.hubTrend = {
+      id: key,
+      loading: false,
+      records,
+      error: ""
+    };
+  } catch (error) {
+    state.hubTrend = {
+      id: key,
+      loading: false,
+      records: [],
+      error: error.message || "기록을 불러오지 못했습니다."
+    };
+  }
+  render();
+}
+
+function averageFinite(values) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (!finite.length) {
+    return null;
+  }
+  return Math.round(finite.reduce((sum, value) => sum + value, 0) / finite.length);
+}
+
+function computeHubTrendScores(record) {
+  const report = computeLocalReportViewModel(record);
+  const inattention = report.metrics.inattention;
+  const impulsivity = report.metrics.impulsivity;
+  const hasSurveyData = getAsrsAnswers(record).length > 0 || getDsmAnswers(record).length > 0;
+  const inattentionSubjective = hasSurveyData && inattention.asrsMax ? toPercent(inattention.asrsScore, inattention.asrsMax) : null;
+  const impulsivitySubjective = hasSurveyData && impulsivity.asrsMax ? toPercent(impulsivity.asrsScore, impulsivity.asrsMax) : null;
+  return {
+    date: record.tests?.game?.completedAt || record.updatedAt || record.createdAt,
+    inattention: averageFinite([
+      inattentionSubjective,
+      inattention.signalScore,
+      inattention.omissionPercent,
+      inattention.variabilityPercent,
+      inattention.tauPercent
+    ]),
+    impulsivity: averageFinite([
+      impulsivitySubjective,
+      impulsivity.goNoGoScore,
+      impulsivity.commissionPercent,
+      impulsivity.fastErrorPercent
+    ])
+  };
+}
+
+function formatTrendDate(dateLike) {
+  const date = new Date(dateLike);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function renderHubTrendChart() {
+  const currentId = state.currentRecord?.id || "";
+  const metas = getHubTrendMetas(state.currentRecord);
+  const expectedKey = `${currentId}:${metas.map((item) => item.fileName).join("|")}`;
+  const isLoading = state.hubTrend.loading || state.hubTrend.id !== expectedKey;
+  const records = state.hubTrend.id === expectedKey ? state.hubTrend.records : [];
+  const points = records
+    .map((record) => computeHubTrendScores(record))
+    .filter((point) => point.date && (Number.isFinite(point.inattention) || Number.isFinite(point.impulsivity)))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .slice(-5);
+
+  const width = 320;
+  const height = 86;
+  const padX = 28;
+  const padY = 10;
+  const plotWidth = width - padX * 2;
+  const plotHeight = height - padY * 2 - 14;
+  const xFor = (index) => points.length <= 1 ? width / 2 : padX + (plotWidth * index) / (points.length - 1);
+  const yFor = (value) => padY + plotHeight - (plotHeight * Math.max(0, Math.min(100, value))) / 100;
+  const makePolyline = (key) => points
+    .map((point, index) => Number.isFinite(point[key]) ? `${xFor(index)},${yFor(point[key])}` : "")
+    .filter(Boolean)
+    .join(" ");
+  const inattentionLine = makePolyline("inattention");
+  const impulsivityLine = makePolyline("impulsivity");
+  const latest = points[points.length - 1] || {};
+
+  return `
+    <div class="hub-trend-card">
+      <div class="hub-trend-header">
+        <div>
+          <strong>최근 지표 변화</strong>
+          <p class="muted">최근 5개 자기점검 기준</p>
+        </div>
+        <div class="hub-trend-legend">
+          <span><i class="legend-dot inattention"></i>집중 유지</span>
+          <span><i class="legend-dot impulsivity"></i>반응 조절</span>
+        </div>
+      </div>
+      ${isLoading ? `
+        <div class="hub-trend-empty">지표 변화를 불러오는 중입니다.</div>
+      ` : state.hubTrend.error ? `
+        <div class="hub-trend-empty">${escapeHtml(state.hubTrend.error)}</div>
+      ` : points.length ? `
+        <svg class="hub-trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="최근 자기점검 지표 변화">
+          <line x1="${padX}" y1="${padY}" x2="${padX}" y2="${padY + plotHeight}" class="chart-axis"></line>
+          <line x1="${padX}" y1="${padY + plotHeight}" x2="${width - padX}" y2="${padY + plotHeight}" class="chart-axis"></line>
+          <line x1="${padX}" y1="${yFor(50)}" x2="${width - padX}" y2="${yFor(50)}" class="chart-grid"></line>
+          ${inattentionLine ? `<polyline points="${inattentionLine}" class="chart-line inattention"></polyline>` : ""}
+          ${impulsivityLine ? `<polyline points="${impulsivityLine}" class="chart-line impulsivity"></polyline>` : ""}
+          ${points.map((point, index) => `
+            ${Number.isFinite(point.inattention) ? `<circle cx="${xFor(index)}" cy="${yFor(point.inattention)}" r="4" class="chart-point inattention"></circle>` : ""}
+            ${Number.isFinite(point.impulsivity) ? `<circle cx="${xFor(index)}" cy="${yFor(point.impulsivity)}" r="4" class="chart-point impulsivity"></circle>` : ""}
+            <text x="${xFor(index)}" y="${height - 5}" text-anchor="middle" class="chart-label">${formatTrendDate(point.date)}</text>
+          `).join("")}
+        </svg>
+        <div class="hub-trend-latest">
+          <span>최근 집중 유지 ${Number.isFinite(latest.inattention) ? latest.inattention : "-"}점</span>
+          <span>최근 반응 조절 ${Number.isFinite(latest.impulsivity) ? latest.impulsivity : "-"}점</span>
+        </div>
+      ` : `
+        <div class="hub-trend-empty">아직 표시할 자기점검 기록이 없어요.</div>
+      `}
+    </div>
+  `;
 }
 
 function computeLocalReportViewModel(record = state.currentRecord) {
@@ -2650,6 +3288,9 @@ function computeLocalReportViewModel(record = state.currentRecord) {
   const asrsAnswers = getAsrsAnswers(record)
     .map((item) => Number(item.answer))
     .filter((value) => Number.isFinite(value));
+  const hasAsrsSurvey = asrsAnswers.length > 0;
+  const hasDsmSurvey = getDsmAnswers(record).length > 0;
+  const surveyLabel = hasDsmSurvey && !hasAsrsSurvey ? "23문항 세부 설문" : "6문항 간단 설문";
   const asrsAttentionScore = asrsAnswers.slice(0, 4).reduce((sum, value) => sum + value, 0);
   const asrsImpulseScore = asrsAnswers.slice(4, 6).reduce((sum, value) => sum + value, 0);
   const signalHasDetail = hasStoredNumber(signal.omission_rate) || (hasStoredNumber(signal.omission_errors) && hasStoredNumber(signal.target_count));
@@ -2666,10 +3307,16 @@ function computeLocalReportViewModel(record = state.currentRecord) {
   const fastErrorRate = hasStoredNumber(goNogo.fast_error_rate) ? Number(goNogo.fast_error_rate) : null;
   const meanGoReactionTime = hasStoredNumber(goNogo.mean_go_reaction_time) ? Number(goNogo.mean_go_reaction_time) : null;
   const impulsePattern = goNogo.level_summary?.pattern || null;
-  const subjectiveDomain = asrs.attentionPositive >= asrs.hyperPositive ? "부주의" : "충동성";
+  const subjectiveDomain = hasAsrsSurvey
+    ? (asrs.attentionPositive >= asrs.hyperPositive ? "부주의" : "충동성")
+    : hasDsmSurvey
+      ? (dsm.inattentionYes >= dsm.hyperactivityYes ? "부주의" : "충동성")
+      : "부주의";
   const objectiveDomain = signalHasDetail || goNogoHasDetail
     ? ((omissionRate || 0) >= (commissionRate || 0) ? "부주의" : "충동성")
     : ((signal.score || 0) <= (goNogo.score || 0) ? "부주의" : "충동성");
+  const subjectiveDomainLabel = subjectiveDomain === "부주의" ? "집중 유지" : "반응 조절";
+  const objectiveDomainLabel = objectiveDomain === "부주의" ? "집중 유지" : "반응 조절";
   const alignment = subjectiveDomain === objectiveDomain ? "일치" : "불일치";
   const dailyImpactLevel = report.dailyImpact?.level
     || Math.max(1, Math.min(5, Math.ceil((dsm.inattentionYes + dsm.hyperactivityYes + dsm.contextualYes * 2) / 4) || 1));
@@ -2691,8 +3338,8 @@ function computeLocalReportViewModel(record = state.currentRecord) {
   const heroSummary = report.hero?.summary
     || report.sections?.summary
     || (alignment === "일치"
-      ? `설문과 반응성 검사 모두 ${subjectiveDomain} 쪽 신호가 비슷하게 관찰됐어요. 현재 패턴을 이해하고 생활 리듬에 맞는 조절 전략을 더해보면 도움이 될 수 있어요.`
-      : "설문에서 느끼는 어려움과 게임 기반 반응 패턴이 조금 다르게 보였어요. 상황과 환경에 따라 증상의 모습이 달라질 수 있다는 신호로 볼 수 있어요.");
+      ? `설문과 반응성 과제 모두 ${subjectiveDomainLabel} 쪽 패턴이 비슷하게 나타났어요. 현재 패턴을 이해하고 생활 리듬에 맞는 조절 전략을 더해보면 도움이 될 수 있어요.`
+      : "설문에서 느끼는 어려움과 게임 기반 반응 패턴이 조금 다르게 보였어요. 상황과 환경에 따라 수행 모습이 달라질 수 있다는 참고 신호로 볼 수 있어요.");
 
   return {
     severity: report.severity || (asrs.totalPositive >= 4 || dsm.inattentionYes >= 6 || dsm.hyperactivityYes >= 6 ? "높음" : asrs.totalPositive >= 2 ? "중간" : "낮음"),
@@ -2701,22 +3348,22 @@ function computeLocalReportViewModel(record = state.currentRecord) {
       summary: heroSummary
     },
     crossCheck: {
-      subjectiveTitle: report.crossCheck?.subjectiveTitle || `주관적 보고는 ${subjectiveDomain} 쪽이 더 크게 느껴져요`,
+      subjectiveTitle: report.crossCheck?.subjectiveTitle || `${surveyLabel}에서는 ${subjectiveDomainLabel} 쪽 부담이 더 보여요`,
       subjectiveText: report.crossCheck?.subjectiveText || (subjectiveDomain === "부주의"
-        ? "자가보고 응답에서는 집중 유지, 시작 지연, 마감 관리와 같은 부주의 신호가 조금 더 강조됐어요."
-        : "자가보고 응답에서는 즉각 반응, 기다리기 어려움 같은 충동성 신호가 조금 더 강조됐어요."),
-      objectiveTitle: report.crossCheck?.objectiveTitle || `객관적 반응은 ${objectiveDomain} 쪽 신호가 더 보여요`,
+        ? `${surveyLabel} 응답에서는 집중 유지, 시작 지연, 마감 관리와 같은 어려움이 조금 더 강조됐어요.`
+        : `${surveyLabel} 응답에서는 즉각 반응, 기다리기 어려움 같은 패턴이 조금 더 강조됐어요.`),
+      objectiveTitle: report.crossCheck?.objectiveTitle || `수행 과제에서는 ${objectiveDomainLabel} 쪽 패턴이 더 보여요`,
       objectiveText: report.crossCheck?.objectiveText || (objectiveDomain === "부주의"
-        ? "반응성 테스트에서는 목표를 놓치거나 반응시간이 흔들리는 패턴이 상대적으로 더 보였어요."
-        : "반응성 테스트에서는 누르면 안 되는 자극에 반응하는 패턴이 상대적으로 더 보였어요."),
+        ? "반응성 과제에서는 목표를 놓치거나 반응시간이 흔들리는 패턴이 상대적으로 더 보였어요."
+        : "반응성 과제에서는 누르면 안 되는 자극에 반응하는 패턴이 상대적으로 더 보였어요."),
       alignmentLabel: report.crossCheck?.alignmentLabel || (alignment === "일치" ? "두 결과가 비슷해요" : "두 결과가 조금 달라요"),
       alignmentSummary: report.crossCheck?.alignmentSummary || (alignment === "일치"
-        ? "스스로 느끼는 어려움과 검사에서 보인 패턴이 같은 방향을 가리켜요."
-        : "평소 체감과 검사 상황의 반응이 다르게 나타나서 환경 영향까지 함께 볼 필요가 있어요.")
+        ? "스스로 느끼는 어려움과 과제에서 보인 패턴이 같은 방향을 가리켜요."
+        : "평소 체감과 과제 상황의 반응이 다르게 나타나서 환경 영향까지 함께 볼 필요가 있어요.")
     },
     profile: {
-      inattentionSummary: report.profile?.inattentionSummary || "부주의 영역은 자가보고 응답과 목표 놓침, 반응시간 변동성, 느리게 처지는 반응 폭을 함께 봤을 때 현재 집중 유지의 일관성을 점검해 볼 필요가 있어 보여요.",
-      impulsivitySummary: report.profile?.impulsivitySummary || "충동성 영역은 자가보고 응답과 잘못된 반응 비율, 성급 반응 비율을 함께 봤을 때 속도보다 멈추는 조절을 연습하는 것이 도움이 될 수 있어요."
+      inattentionSummary: report.profile?.inattentionSummary || `집중 유지 영역은 ${surveyLabel} 응답과 목표 놓침, 반응시간 변동성을 함께 봤을 때 현재 집중 유지의 일관성을 점검해 볼 필요가 있어 보여요.`,
+      impulsivitySummary: report.profile?.impulsivitySummary || `반응 조절 영역은 ${surveyLabel} 응답과 잘못된 반응 비율, 성급 반응 비율을 함께 봤을 때 속도보다 멈추는 조절을 연습하는 것이 도움이 될 수 있어요.`
     },
     dailyImpact: {
       level: dailyImpactLevel,
@@ -2725,12 +3372,12 @@ function computeLocalReportViewModel(record = state.currentRecord) {
     },
     sections: {
       strength: report.sections?.strength || "구조를 만들면 수행이 좋아질 여지가 있고, 관심이 생기는 과제에서는 몰입이 보호 요인으로 작동할 수 있어요.",
-      watchout: report.sections?.watchout || "이 결과는 선별용이므로 수면, 스트레스, 불안·우울 같은 다른 요인도 함께 살펴보는 것이 좋아요."
+      watchout: report.sections?.watchout || "이 리포트는 의학적 진단이 아니라 자기점검 참고 자료예요. 수면, 스트레스, 불안·우울 같은 다른 요인도 함께 살펴보는 것이 좋아요."
     },
     metrics: {
       inattention: {
-        asrsScore: asrsAttentionScore,
-        asrsMax: 16,
+        asrsScore: hasAsrsSurvey ? asrsAttentionScore : dsm.inattentionYes,
+        asrsMax: hasAsrsSurvey ? 16 : 9,
         omissionRate,
         omissionPercent: omissionRate === null ? null : toPercent(omissionRate, 1),
         reactionVariability,
@@ -2742,8 +3389,8 @@ function computeLocalReportViewModel(record = state.currentRecord) {
         signalScore: hasStoredNumber(signal.score) ? Number(signal.score) : null
       },
       impulsivity: {
-        asrsScore: asrsImpulseScore,
-        asrsMax: 8,
+        asrsScore: hasAsrsSurvey ? asrsImpulseScore : dsm.hyperactivityYes,
+        asrsMax: hasAsrsSurvey ? 8 : 9,
         commissionRate,
         commissionPercent: commissionRate === null ? null : toPercent(commissionRate, 1),
         fastErrorRate,
@@ -2813,7 +3460,11 @@ function render() {
   renderTopbarActions();
   renderNav();
   const page = pages[state.route] ? pages[state.route]() : pages.intro();
-  app.innerHTML = page + (state.showJsonModal ? renderJsonModal() : "");
+  app.classList.toggle("app-dtx-embed", state.route === "dtx");
+  app.innerHTML = page
+    + renderAiPendingModal()
+    + (state.showJsonModal ? renderJsonModal() : "")
+    + (state.showThemeModal ? renderThemeModal() : "");
   updateBodyScrollLock();
   bindPageEvents();
 
@@ -2822,11 +3473,53 @@ function render() {
   }
 }
 
+function isAiAnswerPending() {
+  const route = state.route;
+  const asrsPending = route === "asrs-result"
+    && Boolean(state.aiStatus?.configured)
+    && !state.currentRecord?.asrsAnalysis?.summary;
+  const dsmPending = route === "dsm-result"
+    && Boolean(state.aiStatus?.configured)
+    && !state.currentRecord?.dsm5QuickAnalysis?.summary;
+  const reactivityPending = route === "game"
+    && state.gameUi?.phase === "completed"
+    && Boolean(state.aiStatus?.configured)
+    && state.currentRecord?.reactivityAnalysis?.source !== "ai";
+  const insightsPending = state.isGeneratingInsights
+    || ((route === "report" || route === "plan")
+      && (!state.currentRecord?.report
+        || state.currentRecord.report.schemaVersion !== 2
+        || !state.currentRecord?.plan?.suggestions?.length));
+
+  return state.isGeneratingAsrsAnalysis
+    || state.isGeneratingDsmAnalysis
+    || state.isGeneratingReactivityAnalysis
+    || asrsPending
+    || dsmPending
+    || reactivityPending
+    || insightsPending;
+}
+
+function renderAiPendingModal() {
+  if (!isAiAnswerPending()) {
+    return "";
+  }
+
+  return `
+    <div class="overlay-modal ai-pending-modal" role="status" aria-live="polite">
+      <div class="panel stack-md overlay-dialog ai-pending-dialog">
+        <div class="ai-pending-spinner" aria-hidden="true"></div>
+        <h3 class="title-lg">AI가 답변을 생성하고 있어요, 잠시만 기다려 주세요</h3>
+      </div>
+    </div>
+  `;
+}
+
 function updateBodyScrollLock() {
   const isProtectedGamePhase = state.route === "game"
     && (state.gameUi?.phase === "countdown" || state.gameUi?.phase === "running")
     && ["go_nogo", "balance_hold"].includes(state.gameUi?.activeTestKey);
-  const shouldLockScroll = Boolean(isProtectedGamePhase);
+  const shouldLockScroll = Boolean(isProtectedGamePhase || isAiAnswerPending());
   document.body.classList.toggle("body-scroll-lock", shouldLockScroll);
 }
 
@@ -2836,15 +3529,17 @@ function renderNav() {
     : state.route === "dsm-result"
       ? "dsm"
       : state.route;
-  const inlineNav = state.route === "report"
+  const inlineNav = state.route === "intro"
+    || state.route === "id"
+    || state.route === "report"
     || (state.route === "game" && state.gameUi?.phase === "completed");
-  const reviewEnabled = canReviewCompletedFlow(state.currentRecord);
-  bottomNav.className = `bottom-nav${inlineNav ? " bottom-nav-inline" : ""}`;
+  const reviewEnabled = Boolean(state.currentRecord);
+  bottomNav.className = `bottom-nav top-nav${inlineNav ? " bottom-nav-inline" : ""}`;
   app.classList.toggle("app-inline-nav", inlineNav);
   bottomNav.innerHTML = routes
     .map((route) => {
       const active = activeRoute === route.key ? "active" : "";
-      const interactive = reviewEnabled && ["asrs", "dsm", "game", "report", "plan"].includes(route.key);
+      const interactive = reviewEnabled && ["hub", "asrs", "dsm", "game", "report", "plan"].includes(route.key);
       return `
         <button
           class="nav-item ${active} ${interactive ? "is-interactive" : ""}"
@@ -2889,7 +3584,7 @@ function renderGoNoGoStimulus(stimulus, visible) {
   const isPending = !visible && responseWindowState === "pending";
   return `
     <div class="go-nogo-interaction-surface" data-go-nogo-surface>
-      <div class="go-nogo-scene ${isPending ? "pending-window" : ""}" data-go-nogo-scene role="button" tabindex="0" aria-label="멈춤 버튼 테스트 영역">
+      <div class="go-nogo-scene ${isPending ? "pending-window" : ""}" data-go-nogo-scene role="button" tabindex="0" aria-label="멈춤 버튼 과제 영역">
         <div class="go-nogo-stage-backdrop" aria-hidden="true"></div>
         ${feedbackState ? `<img class="go-nogo-feedback-layer visible is-${feedbackState}" src="${feedbackSrc}" alt="" aria-hidden="true" draggable="false">` : ""}
         <div class="go-nogo-stimulus-shell">
@@ -3010,7 +3705,6 @@ function renderGamePage() {
     ? (state.currentRecord?.reactivityAnalysis || fallbackReactivityAnalysis)
     : null;
   const hasReactivityAiResult = state.currentRecord?.reactivityAnalysis?.source === "ai";
-  const showReactivityAiPending = ui.phase === "completed" && Boolean(state.aiStatus?.configured) && !hasReactivityAiResult;
 
   if (ui.phase === "completed" && state.aiStatus?.configured && !hasReactivityAiResult && !state.isGeneratingReactivityAnalysis) {
     window.setTimeout(() => {
@@ -3022,11 +3716,12 @@ function renderGamePage() {
     return `
       <section class="page game-page">
         <div class="panel stack-md game-status-panel">
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <span class="muted" style="font-size:0.82rem;line-height:1.35">
+          <div class="signal-instruction-header">
+            <div class="signal-instruction-guide">
+              <img class="signal-instruction-character" src="/newimages/basic.png?v=${IMAGE_ASSET_VERSION}" alt="안내 캐릭터 애드" />
+              <p class="signal-instruction-copy">
                 파란색 별이 나올 때만 클릭하세요. 다음 이미지가 나오기 전까지 클릭 가능합니다.
-              </span>
+              </p>
             </div>
             <span class="chip">1 / ${GAME_ORDER.length}</span>
           </div>
@@ -3102,7 +3797,7 @@ function renderGamePage() {
                 : "이 환경에서는 마우스나 터치 위치를 따라 공이 움직이는 방식으로 진행합니다."
             }</p>
           </div>
-          <div class="two-actions">
+          <div class="two-actions balance-input-actions">
             ${options.supportsDeviceMotion ? `<button class="button-secondary" type="button" data-balance-input-source="sensor">센서로 진행</button>` : ""}
             <button class="button-ghost" type="button" data-balance-input-source="${options.supportsTouchFallback ? "long_touch" : "pointer"}">
               ${options.supportsTouchFallback ? "터치로 진행" : "마우스로 진행"}
@@ -3140,23 +3835,21 @@ function renderGamePage() {
   if (ui.phase === "result" || ui.phase === "completed") {
     const result = ui.result || {};
     const isPractice = ui.stage === "practice-complete";
-    const nextLabel = ui.phase === "completed" ? "리포트로 이동" : isPractice ? "본 검사 시작" : "다음 테스트";
+    const nextLabel = ui.phase === "completed" ? "패턴 리포트로 이동" : isPractice ? "본 과제 시작" : "다음 과제";
     return `
       <section class="page game-page ${ui.phase === "completed" ? "game-page-completed" : ""}">
         <div class="hero-card stack-lg">
           <div class="stack-sm">
-            <h2 class="title-lg">${ui.phase === "completed" ? "반응성 테스트 통합 결과" : result.title || meta.title}</h2>
+            <h2 class="title-lg">${ui.phase === "completed" ? "반응성 과제 요약" : result.title || meta.title}</h2>
             <p class="muted">${ui.phase === "completed"
-              ? showReactivityAiPending
-                ? "AI가 반응성 테스트 결과를 종합 해석하고 있습니다."
-                : reactivityAnalysis?.summary || game.summary?.summary || ""
+              ? reactivityAnalysis?.summary || game.summary?.summary || ""
               : result.interpretation || ""}</p>
           </div>
           ${ui.phase === "completed"
             ? `<div class="game-metrics">
-                <div class="metric-card stack-sm"><span class="eyebrow">부주의</span><strong>${game.summary?.inattention_signal?.score ?? "-"}</strong></div>
-                <div class="metric-card stack-sm"><span class="eyebrow">충동성</span><strong>${game.summary?.impulsivity_signal?.score ?? "-"}</strong></div>
-                <div class="metric-card stack-sm"><span class="eyebrow">활동성</span><strong>${game.summary?.activity_signal?.score ?? "-"}</strong></div>
+                <div class="metric-card stack-sm"><span class="eyebrow">집중 유지</span><strong>${game.summary?.inattention_signal?.score ?? "-"}</strong></div>
+                <div class="metric-card stack-sm"><span class="eyebrow">반응 조절</span><strong>${game.summary?.impulsivity_signal?.score ?? "-"}</strong></div>
+                <div class="metric-card stack-sm"><span class="eyebrow">움직임 조절</span><strong>${game.summary?.activity_signal?.score ?? "-"}</strong></div>
               </div>`
             : Number.isFinite(result.score) ? `<div class="panel stack-sm"><span class="eyebrow">score</span><strong style="font-size:2rem">${result.score}</strong></div>` : ""}
         </div>
@@ -3164,13 +3857,13 @@ function renderGamePage() {
         ${ui.phase === "completed" ? `
           <div class="panel stack-md">
             <div class="eyebrow">summary</div>
-            <p class="muted">${showReactivityAiPending ? "AI가 부주의 관련 수행 지표를 분석중입니다." : reactivityAnalysis?.inattention || fallbackReactivityAnalysis?.inattention || ""}</p>
-            <p class="muted">${showReactivityAiPending ? "AI가 충동성 관련 수행 지표를 분석중입니다." : reactivityAnalysis?.impulsivity || fallbackReactivityAnalysis?.impulsivity || ""}</p>
-            <p class="muted">${showReactivityAiPending ? "AI가 활동성 관련 수행 지표를 분석중입니다." : reactivityAnalysis?.hyperactivity || fallbackReactivityAnalysis?.hyperactivity || ""}</p>
-            <p class="muted">${showReactivityAiPending ? "AI가 전체 해석과 다음 단계 안내를 정리중입니다." : reactivityAnalysis?.guidance || fallbackReactivityAnalysis?.guidance || ""}</p>
+            <p class="muted">${reactivityAnalysis?.inattention || fallbackReactivityAnalysis?.inattention || ""}</p>
+            <p class="muted">${reactivityAnalysis?.impulsivity || fallbackReactivityAnalysis?.impulsivity || ""}</p>
+            <p class="muted">${reactivityAnalysis?.hyperactivity || fallbackReactivityAnalysis?.hyperactivity || ""}</p>
+            <p class="muted">${reactivityAnalysis?.guidance || fallbackReactivityAnalysis?.guidance || ""}</p>
           </div>
         ` : ""}
-        <button class="button-secondary safe-bottom-actions" id="game-next-button">${nextLabel}</button>
+        <button class="button-secondary safe-bottom-actions ${ui.phase === "completed" ? "reactivity-start-button" : ""}" id="game-next-button">${nextLabel}</button>
       </section>
     `;
   }
@@ -3179,7 +3872,7 @@ function renderGamePage() {
     <section class="page game-page">
       <div class="hero-card stack-lg">
         <div class="stack-sm">
-          <h2 class="title-lg">반응성 테스트 3종을 시작합니다.</h2>
+          <h2 class="title-lg">반응성 과제 3종을 시작합니다.</h2>
         </div>
       </div>
 
@@ -3201,7 +3894,7 @@ function renderGamePage() {
         }).join("")}
       </div>
 
-      <button class="button-secondary safe-bottom-actions" id="game-start-button">${game.status === "completed" ? "리포트 보기" : completedCount ? "이어하기" : "테스트 시작"}</button>
+      <button class="button-secondary safe-bottom-actions reactivity-start-button" id="game-start-button">${game.status === "completed" ? "패턴 리포트 보기" : completedCount ? "이어하기" : "과제 시작"}</button>
     </section>
   `;
 }
@@ -3209,64 +3902,214 @@ function renderGamePage() {
 const pages = {
   intro() {
     return `
-      <section class="page">
-        <div class="hero-card stack-lg">
-          <div class="stack-md">
-            <h2 class="title-xl">ADHD 선별과 감별 <span style="color:#ffacea">ADHDQQ.COM</span></h2>
-            <p class="muted">자가보고 선별, 증상 기준 체크, 반응성 테스트를 통해 ADHD 관련 경향을 분석합니다.</p>
+      <section class="page intro-page mobile-entry">
+        <div class="entry-hero">
+          <div class="entry-copy">
+            <span class="eyebrow">focus self check</span>
+            <h2 class="title-xl">ADDFCS.COM</h2>
+            <p class="muted">애드와 함께 주의·집중·실행 기능 패턴을 정리하는 자기점검 도구</p>
           </div>
-          <div class="panel" style="padding:0;overflow:hidden">
-            <img
-              src="/intro.png"
-              alt="ADHDQQ.COM intro"
-              style="display:block;width:90%;height:auto;max-height:46.8vh;object-fit:contain;background:#1b1b1b;margin:0 auto"
-            />
-          </div>
-          <button class="button-secondary" data-route-next="id">평가 시작하기</button>
+          <img class="entry-sticker" src="${state.introImageSrc}" alt="자가점검 예시 이미지" />
         </div>
-        ${state.showAdminModal ? renderAdminModal() : ""}
+
+        <div class="entry-actions intro-actions">
+          <button class="button-secondary" type="button" id="intro-start-button">내 패턴 확인하기</button>
+          <button class="button-ghost" type="button" id="intro-continue-button">이어서 하기</button>
+          <p class="muted">의학적 진단이 아니라 일상 패턴을 이해하기 위한 참고용 안내로만 사용해 주세요.</p>
+        </div>
       </section>
     `;
   },
 
   id() {
-    return `
-      <section class="page">
-        <div class="hero-card stack-lg">
-          <div class="stack-sm">
-            <h2 class="title-lg">평가를 시작할 ID를 선택하세요.</h2>
-            <p class="muted">새 ID를 만들거나, 기존 ID의 가장 최근 기록을 불러올 수 있습니다.</p>
+    if (state.showExistingIdForm) {
+      return `
+        <section class="page mobile-entry id-onboarding-page resume-load-page">
+          <div class="id-onboarding-card">
+            <img class="id-onboarding-character" src="/newimages/d1.png?v=${IMAGE_ASSET_VERSION}" alt="기록 이어하기 안내 이미지" />
+            <div class="id-onboarding-copy">
+              <h2 class="title-lg">다시 와서 반가워요.</h2>
+              <p class="muted">이전에 만든 ID를 입력하면 저장된 위치에서 이어서 진행할 수 있어요.</p>
+            </div>
+          </div>
+          <div class="panel stack-md resume-load-panel">
+            <form id="manual-load-form" class="stack-sm">
+              <div class="field">
+                <label for="existing-user-id">기존 ID</label>
+                <input id="existing-user-id" name="userId" class="text-input" value="${escapeHtml(state.loadUserId)}" placeholder="예: add01" />
+              </div>
+              <button class="button-secondary" type="submit">이어서 진행하기</button>
+            </form>
+            <button class="button-ghost" type="button" id="id-new-flow-button">새 ID 만들기</button>
+          </div>
+        </section>
+      `;
+    }
+
+    if (state.idOnboardingStep === "resume-confirm") {
+      return `
+        <section class="page mobile-entry id-onboarding-page resume-load-page">
+          <div class="id-onboarding-card">
+            <img class="id-onboarding-character" src="/newimages/d18.png?v=${IMAGE_ASSET_VERSION}" alt="중단 기록 이어하기 안내 이미지" />
+            <div class="id-onboarding-copy">
+              <h2 class="title-lg">전에 하던 점검이 중간에 멈춰 있었어요.</h2>
+              <p class="muted">저장된 위치부터 이어서 진행할게요. 이어하기를 누르면 지난번에 멈춘 화면으로 이동해요.</p>
+            </div>
+          </div>
+          <button class="button-secondary safe-bottom-actions" type="button" id="resume-confirm-button">이어하기</button>
+        </section>
+      `;
+    }
+
+    if (state.idOnboardingStep === "app-intro") {
+      return `
+        <section class="page mobile-entry id-onboarding-page">
+          <div class="id-onboarding-card">
+            <img class="id-onboarding-character" src="/newimages/a1.png?v=${IMAGE_ASSET_VERSION}" alt="자가점검 소개 이미지" />
+            <div class="id-onboarding-copy">
+              <h2 class="title-lg">이 앱은 주의·집중 패턴을 함께 정리하는 자기점검 도구예요.</h2>
+              <p class="muted">짧은 설문과 세부 설문, 반응성 과제 내용을 모아 지금 느끼는 일상 어려움과 실제 수행 패턴을 참고 리포트로 보여줘요.</p>
+            </div>
+          </div>
+          <button class="button-secondary safe-bottom-actions" type="button" id="id-onboarding-understand-button">잘 알겠어요</button>
+        </section>
+      `;
+    }
+
+    if (state.idOnboardingStep === "create-id") {
+      return `
+        <section class="page mobile-entry id-onboarding-page">
+          <div class="id-onboarding-card">
+            <img class="id-onboarding-character" src="/newimages/a4.png?v=${IMAGE_ASSET_VERSION}" alt="ID 생성 안내 이미지" />
+            <div class="id-onboarding-copy">
+              <h2 class="title-lg">먼저 기록을 저장할 ID를 만들게요.</h2>
+              <p class="muted">아직은 베타 테스트 기간이라 비밀번호는 입력하지 않아도 돼요. 나중에 이어서 보려면 만든 ID만 기억해 주세요.</p>
+            </div>
+          </div>
+          <form id="create-id-form" class="entry-form id-create-form">
+            <div class="field">
+              <label for="user-id">아이디</label>
+              <input id="user-id" name="userId" class="text-input" placeholder="예: add01" required />
+            </div>
+            <button class="button-secondary" type="submit">ID 만들기</button>
+          </form>
+        </section>
+      `;
+    }
+
+    if (state.idOnboardingStep === "survey-choice" && state.currentRecord) {
+      return `
+        <section class="page mobile-entry id-onboarding-page">
+          <div class="id-onboarding-card">
+            <img class="id-onboarding-character" src="/newimages/d10.png?v=${IMAGE_ASSET_VERSION}" alt="설문 선택 안내 이미지" />
+            <div class="id-onboarding-copy">
+              <h2 class="title-lg">${escapeHtml(state.currentRecord.id)}님, 만나서 반가워요.</h2>
+              <p class="muted">이제 주의·집중과 실행 기능에 대한 자기점검을 진행할게요. 6문항 간단 점검과 23문항 세부 점검 중 선택할 수 있어요.</p>
+            </div>
           </div>
 
-          ${state.statusMessage ? `<div class="panel">${state.statusMessage}</div>` : ""}
-
-          <form id="create-id-form" class="panel stack-md">
-            <div class="stack-sm">
-              <h3 class="title-lg">새 ID 만들기</h3>
-            </div>
-            <div class="field">
-              <label for="user-id">사용자 ID</label>
-              <input id="user-id" name="userId" class="text-input" placeholder="예: test01" required />
-            </div>
-            <button class="button-secondary" type="submit">새 ID 만들기</button>
-          </form>
-
-          <div class="panel stack-md">
-            <div class="stack-sm">
-              <h3 class="title-lg">기존 기록 불러오기</h3>
-            </div>
-            <button class="button-ghost" type="button" id="toggle-existing-id-form">기존 기록 불러오기</button>
-            ${state.showExistingIdForm ? `
-              <form id="manual-load-form" class="stack-sm">
-                <div class="field">
-                  <label for="existing-user-id">기존 ID 입력</label>
-                  <input id="existing-user-id" name="userId" class="text-input" value="${escapeHtml(state.loadUserId)}" placeholder="예: test01" />
-                </div>
-                <button class="button-secondary" type="submit">이 ID로 이동</button>
-              </form>
+          <div class="panel stack-md survey-choice-panel">
+            <button class="button-ghost" type="button" id="survey-difference-button">무엇이 다른가요?</button>
+            ${state.showSurveyDifference ? `
+              <div class="survey-difference-box">
+                <p class="muted"><strong>6문항 간단 점검</strong>은 5점 척도로 답하면서 짧고 빠르게 현재 경향을 볼 수 있어요.</p>
+                <p class="muted"><strong>23문항 세부 점검</strong>은 네/아니오로 답해서 시간이 조금 더 걸리지만, 과거 사례와 상황까지 포함해 더 자세히 살펴볼 수 있어요.</p>
+              </div>
             ` : ""}
+            <div class="two-actions">
+              <button class="button-secondary" type="button" data-onboarding-survey="asrs">간단 점검</button>
+              <button class="button-secondary" type="button" data-onboarding-survey="dsm">세부 점검</button>
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
+    return `
+      <section class="page mobile-entry id-onboarding-page">
+        <div class="id-onboarding-card">
+          <img class="id-onboarding-character" src="/newimages/basic.png?v=${IMAGE_ASSET_VERSION}" alt="안내 캐릭터 애드" />
+          <div class="id-onboarding-copy">
+            <h2 class="title-lg">저는 애드예요. 만나서 반가워요.</h2>
+            <p class="muted">지금부터 어렵지 않게 하나씩 안내해 드릴게요.</p>
           </div>
         </div>
+        <button class="button-secondary safe-bottom-actions" type="button" id="id-onboarding-greet-button">저도 반가워요!</button>
+      </section>
+    `;
+  },
+
+  hub() {
+    const id = state.currentRecord?.id || "나";
+    const summary = buildHubSummary(state.currentRecord);
+    const dtxStatus = getHubDtxStatus(state.currentRecord);
+    const hasAsrsData = getAsrsAnswers(state.currentRecord).length > 0;
+    const hasDsmData = getDsmAnswers(state.currentRecord).length > 0;
+    const hasReactivityData = hasCompletedReactivity(state.currentRecord);
+    const hasReportData = Boolean(state.currentRecord?.report?.schemaVersion === 2 && state.currentRecord?.plan?.suggestions?.length);
+    window.setTimeout(() => {
+      ensureHubTrendData(state.currentRecord).catch((error) => setStatus(error.message));
+    }, 0);
+    return `
+      <section class="page hub-page">
+        <div class="hub-summary">
+          <img class="hub-summary-image" src="/newimages/basic.png?v=${IMAGE_ASSET_VERSION}" alt="안내 캐릭터 애드" />
+          <div class="hub-summary-copy">
+            <span class="eyebrow">hub</span>
+            <h2 class="title-lg">${escapeHtml(id)}님의 현재 상황</h2>
+            <p class="muted">${escapeHtml(summary)}</p>
+          </div>
+        </div>
+
+        <button class="hub-dtx-button" type="button" data-route-next="dtx" style="--hub-dtx-bg:url('${dtxStatus.image}')">
+          <span class="hub-dtx-title">실천 숲으로 이동</span>
+          <span class="hub-dtx-meta">
+            <span>Level ${escapeHtml(dtxStatus.level)}</span>
+            <span>${dtxStatus.score}점</span>
+          </span>
+        </button>
+
+        <div class="hub-test-grid">
+          ${renderHubActionButton({
+            label: "간단 점검 다시하기",
+            icon: "quiz",
+            statusLabel: hasAsrsData ? "간단 점검 기록 있음" : "간단 점검 기록 없음",
+            hasData: hasAsrsData,
+            attrs: 'data-retake-test="asrs"'
+          })}
+          ${renderHubActionButton({
+            label: "세부 점검 다시하기",
+            icon: "checklist",
+            statusLabel: hasDsmData ? "세부 점검 기록 있음" : "세부 점검 기록 없음",
+            hasData: hasDsmData,
+            attrs: 'data-retake-test="dsm"'
+          })}
+          ${renderHubActionButton({
+            label: "반응성 과제 다시하기",
+            icon: "neurology",
+            statusLabel: hasReactivityData ? "반응성 과제 기록 있음" : "반응성 과제 기록 없음",
+            hasData: hasReactivityData,
+            attrs: 'data-retake-test="game"'
+          })}
+          ${renderHubActionButton({
+            label: "리포트 다시 보기",
+            icon: "analytics",
+            statusLabel: hasReportData ? "패턴 리포트 있음" : "패턴 리포트 없음",
+            hasData: hasReportData,
+            attrs: 'id="reanalyze-button"',
+            extraClass: "hub-reanalyze-button"
+          })}
+        </div>
+        ${renderHubTrendChart()}
+        <p class="muted hub-note">리포트 다시 보기를 누르면 현재 저장된 자기점검과 반응성 과제 기록을 바탕으로 참고 리포트를 새로 정리합니다.</p>
+      </section>
+    `;
+  },
+
+  dtx() {
+    return `
+      <section class="page dtx-embed-page">
+        <iframe class="dtx-embed-frame" src="${getDtxEmbedSrc(state.currentRecord)}" title="실천 숲"></iframe>
       </section>
     `;
   },
@@ -3276,15 +4119,16 @@ const pages = {
     const progress = ((state.asrsIndex + 1) / config.questions.length) * 100;
     const currentQuestion = config.questions[state.asrsIndex];
     const currentAnswer = getAsrsAnswers()?.[state.asrsIndex]?.answer;
-    const currentImage = `/asrs${String(state.asrsIndex + 1).padStart(2, "0")}.png?v=${IMAGE_ASSET_VERSION}`;
+    const currentImage = getAsrsImageSrc(state.asrsIndex);
     return `
       <section class="page">
+        ${renderAddGuide("문항을 하나씩 보고 가장 가까운 빈도를 골라주세요.", { compact: true, tone: "6문항 간단 점검" })}
         <div class="panel stack-md">
           <div class="stack-sm">
             <div class="survey-header-row">
               <div class="survey-header-main">
                 <h2 class="title-lg asrs-title">${config.title}</h2>
-                <p class="muted">${config.description}</p>
+                <p class="muted">최근 6개월을 떠올려 가볍게 자가점검해요.</p>
               </div>
               <div class="eyebrow survey-header-counter">${state.asrsIndex + 1} / ${config.questions.length}</div>
             </div>
@@ -3294,7 +4138,7 @@ const pages = {
 
         <div class="hero-card stack-lg asrs-survey-card">
           <div class="panel asrs-image-panel">
-            <img class="asrs-image" src="${currentImage}" alt="자가보고 선별 문항 ${state.asrsIndex + 1}" />
+            <img class="asrs-image" src="${currentImage}" alt="간단 자기점검 문항 ${state.asrsIndex + 1}" />
           </div>
           <p class="asrs-question">${currentQuestion.prompt}</p>
           <div class="panel stack-sm">
@@ -3326,8 +4170,7 @@ const pages = {
 
   "asrs-result"() {
     const analysis = analyzeAsrs();
-    const hasAsrsAiResult = Boolean(state.currentRecord?.asrsAnalysis?.summary);
-    const showAsrsAiPending = Boolean(state.aiStatus?.configured) && !hasAsrsAiResult;
+    const postSurveyAction = getPostSurveyAction(state.currentRecord);
     if (!state.currentRecord?.asrsAnalysis?.summary && !state.isGeneratingAsrsAnalysis && state.aiStatus?.configured) {
       window.setTimeout(() => {
         ensureAsrsAnalysis().catch((error) => setStatus(error.message));
@@ -3336,39 +4179,37 @@ const pages = {
     return `
       <section class="page">
         <div class="hero-card stack-lg">
-          <div class="eyebrow">self check analysis</div>
+          <div class="eyebrow">간단 점검 요약</div>
           <p class="muted">${
-            showAsrsAiPending
-              ? "AI가 현재 점수 강도를 바탕으로 자가보고 선별 결과를 해석하고 있습니다."
-              : state.currentRecord?.asrsAnalysis?.summary
-                ? state.currentRecord.asrsAnalysis.summary
-                : analysis.isComplete
-                  ? analysis.summary
-                  : "아직 6문항이 모두 입력되지는 않았습니다. 현재까지 입력된 응답을 기준으로 임시 해석을 보여드립니다."
+            state.currentRecord?.asrsAnalysis?.summary
+              ? state.currentRecord.asrsAnalysis.summary
+              : analysis.isComplete
+                ? analysis.summary
+                : "아직 6문항이 모두 입력되지는 않았어요. 지금까지의 응답만 기준으로 가볍게 보여드릴게요."
           }</p>
         </div>
 
         <div class="grid-2">
           <div class="panel stack-md">
-            <div class="eyebrow">screening signal</div>
+            <div class="eyebrow">일상 어려움 지표</div>
             <div class="flex items-end justify-between gap-4">
               <strong style="font-size:1.8rem">${analysis.totalPositive} / 6</strong>
               <span class="chip">${analysis.severity}</span>
             </div>
-            <p class="muted">유의미 문항 기준: 1~3번은 2점 이상, 4~6번은 3점 이상</p>
+            <p class="muted">6문항 중 부담이 표시된 문항 수예요. 숫자가 높을수록 집중이나 조절의 어려움을 더 자주 느꼈을 수 있어요.</p>
           </div>
           <div class="panel stack-md">
-            <div class="eyebrow">domain split</div>
+            <div class="eyebrow">어느 쪽 부담인가요?</div>
             <div class="report-item">
               <div class="flex items-center justify-between gap-4">
-                <strong>주의력 결핍</strong>
+                <strong>집중 유지</strong>
                 <span class="chip">${analysis.attentionPositive} / 4</span>
               </div>
               <div class="progress-bar"><div class="progress-fill" style="width:${analysis.attentionPositive * 25}%"></div></div>
             </div>
             <div class="report-item">
               <div class="flex items-center justify-between gap-4">
-                <strong>과잉행동·충동성</strong>
+                <strong>반응 조절</strong>
                 <span class="chip">${analysis.hyperPositive} / 2</span>
               </div>
               <div class="progress-bar"><div class="progress-fill" style="width:${analysis.hyperPositive * 50}%"></div></div>
@@ -3377,14 +4218,14 @@ const pages = {
         </div>
 
         <div class="panel stack-md">
-          <div class="eyebrow">summary</div>
-          <p class="muted">${showAsrsAiPending ? "AI가 주의력 결핍 관련 응답을 분석중입니다." : state.currentRecord?.asrsAnalysis?.attention || analysis.attentionMessage}</p>
-          <p class="muted">${showAsrsAiPending ? "AI가 과잉행동·충동성 관련 응답을 분석중입니다." : state.currentRecord?.asrsAnalysis?.hyperactivity || analysis.hyperMessage}</p>
-          <p class="muted">${showAsrsAiPending ? "AI가 다음 단계 권고를 정리중입니다." : state.currentRecord?.asrsAnalysis?.guidance || analysis.guidance}</p>
+          <div class="eyebrow">쉽게 풀어보면</div>
+          <p class="muted">${state.currentRecord?.asrsAnalysis?.attention || analysis.attentionMessage}</p>
+          <p class="muted">${state.currentRecord?.asrsAnalysis?.hyperactivity || analysis.hyperMessage}</p>
+          <p class="muted">${state.currentRecord?.asrsAnalysis?.guidance || analysis.guidance}</p>
         </div>
 
-        <div class="two-actions safe-bottom-actions">
-          <button class="button-secondary" data-route-next="dsm">증상 기준 체크 계속하기</button>
+        <div class="result-next-actions safe-bottom-actions">
+          <button class="button-secondary" data-route-next="${postSurveyAction.route}">${postSurveyAction.label}</button>
         </div>
       </section>
     `;
@@ -3392,9 +4233,8 @@ const pages = {
 
   "dsm-result"() {
     const analysis = analyzeDsm();
+    const postSurveyAction = getPostSurveyAction(state.currentRecord);
     const quickAnalysis = state.currentRecord?.dsm5QuickAnalysis || buildLocalDsmQuickAnalysis(state.currentRecord);
-    const hasDsmAiResult = Boolean(state.currentRecord?.dsm5QuickAnalysis?.summary);
-    const showDsmAiPending = Boolean(state.aiStatus?.configured) && !hasDsmAiResult;
     if (!state.currentRecord?.dsm5QuickAnalysis?.summary && !state.isGeneratingDsmAnalysis && state.aiStatus?.configured) {
       window.setTimeout(() => {
         ensureDsmAnalysis().catch((error) => setStatus(error.message));
@@ -3403,35 +4243,31 @@ const pages = {
     return `
       <section class="page">
         <div class="hero-card stack-lg">
-          <div class="eyebrow">symptom check analysis</div>
-          <p class="muted">${
-            showDsmAiPending
-              ? "AI가 현재 증상 기준 체크 응답을 바탕으로 결과를 해석하고 있습니다."
-              : quickAnalysis.summary
-          }</p>
+          <div class="eyebrow">세부 점검 요약</div>
+          <p class="muted">${quickAnalysis.summary}</p>
         </div>
 
         <div class="grid-2">
           <div class="panel stack-md">
-            <div class="eyebrow">subtype signal</div>
+            <div class="eyebrow">현재 가장 가까운 패턴</div>
             <div class="flex items-end justify-between gap-4">
               <strong style="font-size:1.6rem">${analysis.subtype}</strong>
               <span class="chip">${analysis.inattentionYes + analysis.hyperactivityYes} yes</span>
             </div>
-            <p class="muted">${showDsmAiPending ? "AI가 현재 분류와 다음 단계 권고를 분석중입니다." : quickAnalysis.guidance}</p>
+            <p class="muted">${quickAnalysis.guidance}</p>
           </div>
           <div class="panel stack-md">
-            <div class="eyebrow">domain split</div>
+            <div class="eyebrow">영역별 부담</div>
             <div class="report-item">
               <div class="flex items-center justify-between gap-4">
-                <strong>부주의</strong>
+                <strong>집중 유지</strong>
                 <span class="chip">${analysis.inattentionYes} / 9</span>
               </div>
               <div class="progress-bar"><div class="progress-fill" style="width:${analysis.inattentionYes * (100 / 9)}%"></div></div>
             </div>
             <div class="report-item">
               <div class="flex items-center justify-between gap-4">
-                <strong>과잉행동·충동성</strong>
+                <strong>반응 조절</strong>
                 <span class="chip">${analysis.hyperactivityYes} / 9</span>
               </div>
               <div class="progress-bar"><div class="progress-fill" style="width:${analysis.hyperactivityYes * (100 / 9)}%"></div></div>
@@ -3440,14 +4276,14 @@ const pages = {
         </div>
 
         <div class="panel stack-md">
-          <div class="eyebrow">summary</div>
-          <p class="muted">${showDsmAiPending ? "AI가 현재 유형 신호를 정리중입니다." : quickAnalysis.subtype || analysis.subtype}</p>
-          <p class="muted">${showDsmAiPending ? "AI가 부주의 영역 응답을 분석중입니다." : quickAnalysis.inattention}</p>
-          <p class="muted">${showDsmAiPending ? "AI가 과잉행동·충동성 영역 응답을 분석중입니다." : quickAnalysis.hyperactivity}</p>
+          <div class="eyebrow">쉽게 풀어보면</div>
+          <p class="muted">${quickAnalysis.subtype || analysis.subtype}</p>
+          <p class="muted">${quickAnalysis.inattention}</p>
+          <p class="muted">${quickAnalysis.hyperactivity}</p>
         </div>
 
-        <div class="two-actions safe-bottom-actions">
-          <button class="button-secondary" data-route-next="game">반응성 테스트 계속하기</button>
+        <div class="result-next-actions safe-bottom-actions">
+          <button class="button-secondary" data-route-next="${postSurveyAction.route}">${postSurveyAction.label}</button>
         </div>
       </section>
     `;
@@ -3460,12 +4296,13 @@ const pages = {
     const currentAnswer = getDsmAnswers()?.[state.dsmIndex]?.answer;
     return `
       <section class="page">
+        ${renderAddGuide("맞다/아니다 중 더 가까운 쪽을 선택하면 다음 문항으로 넘어가요.", { compact: true, tone: "23문항 심층 점검" })}
         <div class="panel stack-md">
           <div class="stack-sm">
             <div class="survey-header-row">
               <div class="survey-header-main">
                 <h2 class="title-lg asrs-title">${config.title}</h2>
-                <p class="muted">${config.description}</p>
+                <p class="muted">의학적 진단이 아니라 주의·집중·실행 기능 패턴을 나눠 보는 참고용 점검이에요.</p>
               </div>
               <div class="eyebrow survey-header-counter">${state.dsmIndex + 1} / ${config.questions.length}</div>
             </div>
@@ -3473,15 +4310,15 @@ const pages = {
           <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
         </div>
 
-        <div class="hero-card stack-lg">
+        <div class="hero-card stack-lg dsm-survey-card">
           <div class="panel dsm-image-panel">
-            <img class="dsm-image" src="${getDsmImageSrc(state.dsmIndex)}" alt="증상 기준 체크 문항 ${state.dsmIndex + 1}" />
+            <img class="dsm-image" src="${getDsmImageSrc(state.dsmIndex)}" alt="실행 기능 세부 점검 문항 ${state.dsmIndex + 1}" />
           </div>
           <p class="asrs-question">${question.prompt}</p>
           <p class="muted">${question.hint}</p>
           <div class="binary-grid">
-            <button class="binary-button ${currentAnswer === false ? "selected-no" : ""}" type="button" data-dsm-answer="false" ${state.isAdvancingDsm ? "disabled" : ""}>No</button>
-            <button class="binary-button ${currentAnswer === true ? "selected-yes" : ""}" type="button" data-dsm-answer="true" ${state.isAdvancingDsm ? "disabled" : ""}>Yes</button>
+            <button class="binary-button ${currentAnswer === false ? "selected-no" : ""}" type="button" data-dsm-answer="false" ${state.isAdvancingDsm ? "disabled" : ""}>아니다</button>
+            <button class="binary-button ${currentAnswer === true ? "selected-yes" : ""}" type="button" data-dsm-answer="true" ${state.isAdvancingDsm ? "disabled" : ""}>그렇다</button>
           </div>
         </div>
       </section>
@@ -3494,14 +4331,14 @@ const pages = {
 
   report() {
     const hasReport = Boolean(state.currentRecord?.report) && state.currentRecord.report.schemaVersion === 2;
+    if (!hasReport && !state.isGeneratingInsights) {
+      window.setTimeout(() => {
+        ensureInsights().catch((error) => setStatus(error.message));
+      }, 0);
+    }
     if (state.isGeneratingInsights || !hasReport) {
       return `
         <section class="page">
-          <div class="panel stack-md">
-            <div class="eyebrow">report</div>
-            <h2 class="title-lg">리포트를 생성하는 중입니다.</h2>
-            <p class="muted">Gemini가 응답 내용을 바탕으로 요약과 권고안을 만들고 있습니다. 몇 초 정도 걸릴 수 있습니다.</p>
-          </div>
         </section>
       `;
     }
@@ -3511,13 +4348,14 @@ const pages = {
     return `
       <section class="page">
         <div class="hero-card stack-lg report-hero-card">
-          <div class="eyebrow">hero summary</div>
+          <div class="eyebrow">pattern report</div>
           <div class="stack-sm">
             <div class="report-badge-row">
               ${report.hero.badges.map((badge) => `<span class="chip">${badge}</span>`).join("")}
             </div>
-            <h2 class="title-lg">${state.currentRecord.id}의 현재 신호는 <span style="color:#ffacea">${report.severity}</span> 관심군으로 정리돼요.</h2>
+            <h2 class="title-lg">${state.currentRecord.id}님의 현재 주의·집중 패턴은 <span class="theme-accent-text">${report.severity}</span> 흐름으로 정리돼요.</h2>
             <p class="muted">${report.hero.summary}</p>
+            <p class="muted">이 리포트는 의학적 진단이 아니라 자기점검 참고 자료이며, 어려움이 지속되면 정확한 이해를 위해 전문가 상담을 함께 고려해볼 수 있습니다.</p>
           </div>
         </div>
 
@@ -3525,12 +4363,12 @@ const pages = {
           <div class="eyebrow">subjective vs objective</div>
           <div class="grid-2">
             <div class="metric-card stack-sm">
-              <span class="eyebrow">카드 A · 내가 느끼는 나</span>
+              <span class="eyebrow">카드 A · 내가 느끼는 일상</span>
               <strong>${report.crossCheck.subjectiveTitle}</strong>
               <p class="muted">${report.crossCheck.subjectiveText}</p>
             </div>
             <div class="metric-card stack-sm">
-              <span class="eyebrow">카드 B · 게임이 본 나</span>
+              <span class="eyebrow">카드 B · 과제에서 보인 수행</span>
               <strong>${report.crossCheck.objectiveTitle}</strong>
               <p class="muted">${report.crossCheck.objectiveText}</p>
             </div>
@@ -3542,10 +4380,10 @@ const pages = {
         </div>
 
         <div class="panel stack-md">
-          <div class="eyebrow">cognitive profile</div>
+          <div class="eyebrow">executive function profile</div>
           <div class="report-tab-row">
-            <button class="button-ghost ${activeTab === "inattention" ? "report-tab-active" : ""}" type="button" data-report-tab="inattention">부주의 영역</button>
-            <button class="button-ghost ${activeTab === "impulsivity" ? "report-tab-active" : ""}" type="button" data-report-tab="impulsivity">충동성 영역</button>
+            <button class="button-ghost ${activeTab === "inattention" ? "report-tab-active" : ""}" type="button" data-report-tab="inattention">집중 유지</button>
+            <button class="button-ghost ${activeTab === "impulsivity" ? "report-tab-active" : ""}" type="button" data-report-tab="impulsivity">반응 조절</button>
           </div>
           ${activeTab === "inattention" ? `
             <div class="stack-md">
@@ -3553,7 +4391,7 @@ const pages = {
               <div class="report-metric-grid">
                 <div class="report-item">
                   <div class="flex items-center justify-between gap-4">
-                    <strong>자가보고 부주의 점수</strong>
+                    <strong>집중 유지 응답 지표</strong>
                     <span class="chip">${profileMetric.asrsScore} / ${profileMetric.asrsMax}</span>
                   </div>
                   <div class="progress-bar"><div class="progress-fill" style="width:${toPercent(profileMetric.asrsScore, profileMetric.asrsMax)}%"></div></div>
@@ -3594,7 +4432,7 @@ const pages = {
               <div class="report-metric-grid">
                 <div class="report-item">
                   <div class="flex items-center justify-between gap-4">
-                    <strong>자가보고 충동성 점수</strong>
+                    <strong>반응 조절 응답 지표</strong>
                     <span class="chip">${profileMetric.asrsScore} / ${profileMetric.asrsMax}</span>
                   </div>
                   <div class="progress-bar"><div class="progress-fill" style="width:${toPercent(profileMetric.asrsScore, profileMetric.asrsMax)}%"></div></div>
@@ -3664,14 +4502,15 @@ const pages = {
     const planSuggestions = Array.isArray(plan?.suggestions)
       ? plan.suggestions.map((item) => normalizePlanSuggestion(item)).filter(Boolean).slice(0, 3)
       : [];
-    if (state.isGeneratingInsights || !plan) {
+    const hasPlan = planSuggestions.length > 0;
+    if (!hasPlan && !state.isGeneratingInsights) {
+      window.setTimeout(() => {
+        ensureInsights().catch((error) => setStatus(error.message));
+      }, 0);
+    }
+    if (state.isGeneratingInsights || !hasPlan) {
       return `
         <section class="page">
-          <div class="panel stack-md">
-            <div class="eyebrow">plan</div>
-            <h2 class="title-lg">계획을 생성하는 중입니다.</h2>
-            <p class="muted">리포트 생성과 함께 Gemini가 실행 가능한 계획 3가지를 정리하고 있습니다.</p>
-          </div>
         </section>
       `;
     }
@@ -3681,7 +4520,7 @@ const pages = {
           <div class="eyebrow">action plan</div>
           <div class="stack-sm">
             <h2 class="title-lg">${state.currentRecord.id}에게 맞춘 3가지 제안</h2>
-            <p class="muted">리포트 결과를 바탕으로 바로 실행 가능한 개선 방향을 정리했습니다.</p>
+            <p class="muted">패턴 리포트를 바탕으로 바로 실행 가능한 작은 조정 방향을 정리했습니다.</p>
           </div>
         </div>
 
@@ -3694,20 +4533,8 @@ const pages = {
           `).join("")}
         </div>
 
-        <div class="chat-card panel stack-md">
-          <div class="eyebrow">ai assistant</div>
-          <div class="chat-log">
-            ${plan.chat.map((item) => `
-              <div class="chat-bubble ${item.role === "user" ? "user" : ""}">
-                <strong>${item.role === "user" ? "사용자" : "AI"}</strong>
-                <p class="muted">${item.text}</p>
-              </div>
-            `).join("")}
-          </div>
-          <form id="plan-chat-form" class="stack-sm">
-            <input class="chat-input" name="message" placeholder="예: 회사 일정에 맞게 오전 루틴으로 바꿔줘" />
-            <button class="button-secondary safe-bottom-actions" type="submit">계획 수정 요청</button>
-          </form>
+        <div class="plan-hub-actions safe-bottom-actions">
+          <button class="button-secondary" type="button" data-route-next="hub">허브로 가기</button>
         </div>
       </section>
     `;
@@ -3727,8 +4554,8 @@ function scoreLabel(key) {
 
 function renderAdminModal() {
   return `
-    <div class="panel" style="position:fixed;inset:0;background:rgba(0,0,0,0.58);display:flex;align-items:center;justify-content:center;padding:1rem;z-index:30">
-      <div class="panel stack-md" style="width:min(720px,100%);max-height:80vh;overflow:auto;background:#1b1b1b">
+    <div class="overlay-modal">
+      <div class="panel stack-md overlay-dialog">
         <div class="flex items-center justify-between gap-4">
           <div class="stack-sm">
             <div class="eyebrow">admin</div>
@@ -3775,6 +4602,48 @@ function renderJsonModal() {
   `;
 }
 
+function renderThemeModal() {
+  return `
+    <div class="overlay-modal">
+      <div class="panel stack-md overlay-dialog overlay-dialog-wide">
+        <div class="flex items-center justify-between gap-4">
+          <div class="stack-sm">
+            <div class="eyebrow">design theme</div>
+            <h3 class="title-lg">디자인 템플릿 선택</h3>
+          </div>
+          <button class="button-ghost" type="button" id="close-theme-modal">닫기</button>
+        </div>
+        <p class="muted"><code>designmd</code> 폴더의 템플릿을 읽어 현재 앱에 적용합니다.</p>
+        <label class="theme-toggle-row" for="theme-font-scale-toggle">
+          <span class="stack-sm">
+            <strong>폰트 크기 템플릿 반영</strong>
+            <span class="muted">끄면 현재 앱 기본 레이아웃 크기를 유지하고, 켜면 템플릿의 타이포 크기/행간/자간을 적용합니다.</span>
+          </span>
+          <input id="theme-font-scale-toggle" type="checkbox" ${state.themeFontScaleEnabled ? "checked" : ""} />
+        </label>
+        <div class="theme-grid">
+          ${state.designThemes.length
+            ? state.designThemes.map((theme) => `
+              <button
+                class="theme-card ${theme.slug === state.activeThemeSlug ? "active" : ""}"
+                type="button"
+                data-theme-slug="${escapeHtml(theme.slug)}"
+              >
+                <span class="theme-card-name">${escapeHtml(theme.name || theme.slug)}</span>
+                <div class="theme-card-meta">
+                  <span class="chip">${escapeHtml(theme.slug)}</span>
+                  <span class="chip">${escapeHtml(theme.version || "unknown")}</span>
+                </div>
+                <span class="muted">${escapeHtml(theme.description || "설명이 없습니다.")}</span>
+              </button>
+            `).join("")
+            : `<div class="list-card"><span class="muted">사용 가능한 디자인 템플릿이 없습니다.</span></div>`}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderRadar(scores, labels) {
   const values = [
     scores.attention,
@@ -3798,21 +4667,21 @@ function renderRadar(scores, labels) {
     const labelRadius = radius + 22;
     const x = center + labelRadius * Math.cos(angle);
     const y = center + labelRadius * Math.sin(angle);
-    return `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" fill="#d7c0ce" font-size="10" text-anchor="middle">${label}</text>`;
+    return `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" fill="var(--theme-muted)" font-size="10" text-anchor="middle">${label}</text>`;
   }).join("");
 
   return `
     <svg class="radar-svg" viewBox="0 0 220 240" aria-label="radar graph">
-      <polygon points="110,26 189.87,84.02 159.39,177.98 60.61,177.98 30.13,84.02" fill="none" stroke="rgba(215,192,206,0.15)" />
-      <polygon points="110,48 168.08,90.19 145.9,158.31 74.1,158.31 51.92,90.19" fill="none" stroke="rgba(215,192,206,0.10)" />
-      <polygon points="110,68 152.32,98.76 136.16,148.49 83.84,148.49 67.68,98.76" fill="none" stroke="rgba(215,192,206,0.08)" />
-      <polygon points="${points}" fill="rgba(246,122,223,0.16)" stroke="#ffacea" stroke-width="2"></polygon>
+      <polygon points="110,26 189.87,84.02 159.39,177.98 60.61,177.98 30.13,84.02" fill="none" stroke="color-mix(in srgb, var(--theme-muted) 15%, transparent)" />
+      <polygon points="110,48 168.08,90.19 145.9,158.31 74.1,158.31 51.92,90.19" fill="none" stroke="color-mix(in srgb, var(--theme-muted) 10%, transparent)" />
+      <polygon points="110,68 152.32,98.76 136.16,148.49 83.84,148.49 67.68,98.76" fill="none" stroke="color-mix(in srgb, var(--theme-muted) 8%, transparent)" />
+      <polygon points="${points}" fill="color-mix(in srgb, var(--theme-accent) 16%, transparent)" stroke="var(--theme-accent)" stroke-width="2"></polygon>
       ${values.map((value, index) => {
         const angle = (-90 + index * (360 / values.length)) * (Math.PI / 180);
         const pointRadius = (radius * value) / 100;
         const x = center + pointRadius * Math.cos(angle);
         const y = center + pointRadius * Math.sin(angle);
-        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" fill="#ffacea"></circle>`;
+        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" fill="var(--theme-accent)"></circle>`;
       }).join("")}
       ${labelNodes}
     </svg>
@@ -3842,6 +4711,59 @@ function bindPageEvents() {
     handleCreateId(event).catch((error) => setStatus(error.message));
   });
 
+  document.querySelector("#intro-start-button")?.addEventListener("click", () => {
+    state.showExistingIdForm = false;
+    state.idOnboardingStep = "greeting";
+    state.showSurveyDifference = false;
+    state.route = "id";
+    render();
+  });
+
+  document.querySelector("#intro-continue-button")?.addEventListener("click", () => {
+    state.showExistingIdForm = true;
+    state.pendingResumeFileName = "";
+    state.pendingResumeRoute = "";
+    state.showSurveyDifference = false;
+    state.route = "id";
+    render();
+  });
+
+  document.querySelector("#id-new-flow-button")?.addEventListener("click", () => {
+    state.showExistingIdForm = false;
+    state.idOnboardingStep = "greeting";
+    state.pendingResumeFileName = "";
+    state.pendingResumeRoute = "";
+    state.showSurveyDifference = false;
+    render();
+  });
+
+  document.querySelector("#id-onboarding-greet-button")?.addEventListener("click", () => {
+    state.idOnboardingStep = "app-intro";
+    render();
+  });
+
+  document.querySelector("#id-onboarding-understand-button")?.addEventListener("click", () => {
+    state.idOnboardingStep = "create-id";
+    render();
+  });
+
+  document.querySelector("#survey-difference-button")?.addEventListener("click", () => {
+    state.showSurveyDifference = !state.showSurveyDifference;
+    render();
+  });
+
+  document.querySelector("#resume-confirm-button")?.addEventListener("click", () => {
+    continuePendingResume().catch((error) => setStatus(error.message));
+  });
+
+  document.querySelectorAll("[data-onboarding-survey]").forEach((node) => {
+    node.addEventListener("click", async (event) => {
+      const route = event.currentTarget.getAttribute("data-onboarding-survey");
+      await syncCurrentStep(route);
+      navTo(route);
+    });
+  });
+
   document.querySelector("#manual-load-form")?.addEventListener("submit", (event) => {
     state.loadUserId = new FormData(event.currentTarget).get("userId");
     submitManualLoad(event).catch((error) => setStatus(error.message));
@@ -3861,6 +4783,21 @@ function bindPageEvents() {
 
   document.querySelector("#close-json-modal")?.addEventListener("click", () => {
     closeJsonModal();
+  });
+
+  document.querySelector("#close-theme-modal")?.addEventListener("click", () => {
+    closeThemeModal();
+  });
+
+  document.querySelector("#theme-font-scale-toggle")?.addEventListener("change", (event) => {
+    updateThemeFontScalePreference(event.currentTarget.checked);
+  });
+
+  document.querySelectorAll("[data-theme-slug]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      await selectDesignTheme(node.getAttribute("data-theme-slug"));
+      closeThemeModal();
+    });
   });
 
   document.querySelectorAll(".load-record").forEach((node) => {
@@ -3974,6 +4911,16 @@ function bindPageEvents() {
     node.addEventListener("click", () => {
       state.reportProfileTab = node.getAttribute("data-report-tab") || "inattention";
       render();
+    });
+  });
+
+  document.querySelector("#reanalyze-button")?.addEventListener("click", () => {
+    forceRegenerateInsights().catch((error) => setStatus(error.message));
+  });
+
+  document.querySelectorAll("[data-retake-test]").forEach((node) => {
+    node.addEventListener("click", () => {
+      retakeAssessment(node.getAttribute("data-retake-test")).catch((error) => setStatus(error.message));
     });
   });
 

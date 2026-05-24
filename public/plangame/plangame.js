@@ -110,15 +110,15 @@ function renderGoalMeta(goal) {
 function updateHeader() {
   if (!state.record) {
     userChip.textContent = "사용자 없음";
-    scoreChip.textContent = "숲 점수 0점";
-    localScoreChip.textContent = "플랜 점수 0점";
+    scoreChip.textContent = "숲 포인트 0";
+    localScoreChip.textContent = "플랜 포인트 0";
     bg.src = computeStageByScore(0).image;
     return;
   }
   const dtx = ensureDtx(state.record);
   userChip.textContent = state.record.id;
-  scoreChip.textContent = `숲 점수 ${dtx.totalScore}점`;
-  localScoreChip.textContent = `플랜 점수 ${dtx.scores.plangame}점`;
+  scoreChip.textContent = `숲 포인트 ${dtx.totalScore}`;
+  localScoreChip.textContent = `플랜 포인트 ${dtx.scores.plangame}`;
   bg.src = computeStageByScore(dtx.totalScore).image;
 }
 

@@ -1,7 +1,7 @@
 # Design System Strategy: The Supportive Sculptor
 
 ## 1. Overview & Creative North Star
-The "Creative North Star" for this design system is **The Supportive Sculptor**. In the context of ADHD screening and management, the UI must do more than display data; it must shape focus, reduce cognitive load, and provide a tactile, high-end environment that feels both playground-playful and clinic-professional.
+The "Creative North Star" for this design system is **The Supportive Sculptor**. In the context of attention and executive-function self-check and management, the UI must do more than display data; it must shape focus, reduce cognitive load, and provide a tactile, high-end environment that feels both playground-playful and clinic-professional.
 
 This system moves beyond the "grid-and-container" status quo by embracing **Intentional Asymmetry**. By using overlapping elements, circular image masks, and high-contrast typography, we create an editorial experience that guides the eye through a rhythmic flow. This isn't just an app; it’s a high-performance workspace designed for neurodivergent minds, where hierarchy is signaled through tonal depth and "vibe" rather than rigid, overwhelming lines.
 
@@ -34,8 +34,8 @@ For floating elements (modals, fixed navigation), use **Glassmorphism**:
 Typography is the voice of the system. We use a high-contrast mix of bold, expressive shapes and clinical clarity.
 
 - **Display & Headline (Plus Jakarta Sans):** These are our "bold anchors." They should be used with tight letter-spacing and generous line-height to feel modern and supportive. These fonts represent the "Playful" side of the brand.
-- **Body & Titles (Inter):** Used for all functional reading. Inter provides the "Professional" grounding needed for ADHD management tools, ensuring that dense information is highly legible.
-- **Labels (Space Grotesk):** Specifically for technical data and visualizations. The monospaced lean of Space Grotesk provides a "scientific" feel to screening results.
+- **Body & Titles (Inter):** Used for all functional reading. Inter provides the "Professional" grounding needed for attention pattern support tools, ensuring that dense information is highly legible.
+- **Labels (Space Grotesk):** Specifically for technical data and visualizations. The monospaced lean of Space Grotesk provides a "scientific" feel to self-check insights.
 
 ---
 
@@ -64,7 +64,7 @@ Depth is emotional, not just structural. We avoid the "floating card" look of 20
 - **The "Single Focus" Input:** Input fields should use `surface-container-highest` with `roundedness.md`. 
 - **Focus State:** Instead of a heavy border, a focused field should trigger a soft outer glow (the Ghost Border) and the label should shift to `primary` (#FFACEA).
 
-### Data Visualization (ADHD Screening)
+### Data Visualization (attention and executive-function self-check)
 - Use `tertiary` (#C1D03F) for positive progress and `primary` (#FFACEA) for attention-required areas.
 - Visuals should be large and "chunky," using the `roundedness.full` token for bar charts and progress rings to maintain the playful-professional balance.
 
@@ -76,7 +76,7 @@ Depth is emotional, not just structural. We avoid the "floating card" look of 20
 - **Do** use `display-lg` typography for provocative, supportive headers.
 - **Do** overlap elements (e.g., a circular image slightly hanging off a card) to create a sense of bespoke, editorial design.
 - **Do** use high-contrast color pairings for buttons (e.g., Pink on Dark Purple) to aid users with visual processing difficulties.
-- **Do** prioritize white space. For ADHD tools, "less" is the ultimate feature.
+- **Do** prioritize white space. For self-check tools, "less" is the ultimate feature.
 
 ### Don't:
 - **Don't** use 1px dividers or "traditional" card shadows. It creates visual "noise."

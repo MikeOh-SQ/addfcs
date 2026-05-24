@@ -2,8 +2,8 @@
 <html lang="ko" class="dark">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ADHDQQ.COM</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>ADDFCS.COM</title>
     <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,53 +11,23 @@
       href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
       rel="stylesheet"
     />
-    <script>
-      tailwind.config = {
-        darkMode: "class",
-        theme: {
-          extend: {
-            colors: {
-              background: "#131313",
-              surface: "#1b1b1b",
-              card: "#1f1f1f",
-              cardHigh: "#2a2a2a",
-              cardTop: "#353535",
-              text: "#e2e2e2",
-              textMuted: "#d7c0ce",
-              primary: "#ffacea",
-              primaryStrong: "#f67adf",
-              secondary: "#c2c1ff",
-              secondaryText: "#1900a7",
-              tertiary: "#c1d03f",
-              outline: "rgba(82,66,77,0.35)"
-            },
-            fontFamily: {
-              headline: ["Plus Jakarta Sans", "sans-serif"],
-              body: ["Inter", "sans-serif"],
-              label: ["Space Grotesk", "sans-serif"]
-            },
-            boxShadow: {
-              ambient: "0 4px 48px rgba(226,226,226,0.06)"
-            }
-          }
-        }
-      };
-    </script>
-    <link rel="stylesheet" href="/styles.css?v=19" />
+    <link rel="stylesheet" href="/styles.css?v=33" />
   </head>
-  <body class="bg-background text-text font-body selection:bg-primary/30">
+  <body>
     <div class="app-shell" data-scale-fit="720x1080">
       <header class="topbar">
-        <h1 class="font-headline text-xl font-extrabold tracking-tight">ADHDQQ.COM</h1>
+        <div class="topbar-brand">
+          <h1 class="brand-title">ADDFCS.COM</h1>
+          <p class="brand-subtitle" id="theme-nameplate"></p>
+        </div>
+        <nav id="bottom-nav" class="bottom-nav top-nav"></nav>
         <div id="topbar-actions"></div>
       </header>
 
       <main id="app" class="pb-36"></main>
-
-      <nav id="bottom-nav" class="bottom-nav"></nav>
     </div>
 
-    <script src="/dtx/common.js?v=20"></script>
-    <script type="module" src="/app.js?v=19"></script>
+    <script src="/dtx/common.js?v=21"></script>
+    <script type="module" src="/app.js?v=33"></script>
   </body>
   </html>

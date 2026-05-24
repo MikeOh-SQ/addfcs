@@ -1,0 +1,73 @@
+<svg width="1600" height="1120" viewBox="0 0 1600 1120" role="img" aria-labelledby="title desc">
+  <title id="title">Principles of Multi-Layered Pattern Interpretation</title>
+  <desc id="desc">A 2x2 academic matrix describing agreement and disagreement patterns between self-report or symptom structuring results and behavioral task results.</desc>
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 34px; font-weight: 700; fill: #111111; }
+      .axis-title { font-family: Arial, Helvetica, sans-serif; font-size: 23px; font-weight: 700; fill: #111111; }
+      .axis-label { font-family: Arial, Helvetica, sans-serif; font-size: 19px; font-weight: 700; fill: #222222; }
+      .quad-title { font-family: Arial, Helvetica, sans-serif; font-size: 21px; font-weight: 700; fill: #111111; }
+      .body { font-family: Arial, Helvetica, sans-serif; font-size: 17px; font-weight: 400; fill: #333333; }
+      .recommend { font-family: Arial, Helvetica, sans-serif; font-size: 17px; font-weight: 700; fill: #1f4e5f; }
+      .note { font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 500; fill: #222222; }
+      .matrix-border { fill: none; stroke: #222222; stroke-width: 2; }
+      .grid-line { stroke: #666666; stroke-width: 1.5; }
+      .cell-neutral { fill: #fbfbfb; }
+      .cell-accent { fill: #f4f7f8; }
+      .cell-soft { fill: #f8f8f8; }
+      .note-box { fill: #ffffff; stroke: #777777; stroke-width: 1.2; rx: 6; }
+      .small-line { stroke: #d4d4d4; stroke-width: 1; }
+      .tag { fill: #ffffff; stroke: #1f4e5f; stroke-width: 1.2; rx: 12; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="1120"/>
+  <text class="title" x="800" y="74" text-anchor="middle">Principles of Multi-Layered Pattern Interpretation</text>
+  <line class="small-line" x1="90" y1="122" x2="1510" y2="122"/>
+
+  <text class="axis-title" x="900" y="164" text-anchor="middle">Behavioral Task Results</text>
+  <text class="axis-label" x="620" y="206" text-anchor="middle">Stable</text>
+  <text class="axis-label" x="1180" y="206" text-anchor="middle">Observed Instability</text>
+
+  <g transform="translate(112,610) rotate(-90)">
+    <text class="axis-title" x="0" y="0" text-anchor="middle">Self-Report / Symptom Structuring</text>
+  </g>
+  <text class="axis-label" x="245" y="378" text-anchor="middle">High Difficulties</text>
+  <text class="axis-label" x="245" y="790" text-anchor="middle">Low Difficulties</text>
+
+  <rect class="cell-soft" x="340" y="240" width="560" height="330"/>
+  <rect class="cell-accent" x="900" y="240" width="560" height="330"/>
+  <rect class="cell-neutral" x="340" y="570" width="560" height="330"/>
+  <rect class="cell-soft" x="900" y="570" width="560" height="330"/>
+  <rect class="matrix-border" x="340" y="240" width="1120" height="660"/>
+  <line class="grid-line" x1="900" y1="240" x2="900" y2="900"/>
+  <line class="grid-line" x1="340" y1="570" x2="1460" y2="570"/>
+
+  <rect class="tag" x="370" y="266" width="132" height="34"/>
+  <text class="recommend" x="436" y="289" text-anchor="middle">Disagreement</text>
+  <text class="quad-title" x="370" y="340">Subjective Difficulty-Dominant Pattern</text>
+  <text class="body" x="370" y="405">Everyday difficulties are high, but structured task performance is relatively stable</text>
+  <text class="recommend" x="370" y="500">Check everyday context and functional impairment</text>
+
+  <rect class="tag" x="930" y="266" width="132" height="34"/>
+  <text class="recommend" x="996" y="289" text-anchor="middle">Convergence</text>
+  <text class="quad-title" x="930" y="340">Convergent Difficulty Pattern</text>
+  <text class="body" x="930" y="405">Subjective difficulties and performance instability are observed in the same direction</text>
+  <text class="recommend" x="930" y="500">Further evaluation may be helpful</text>
+
+  <rect class="tag" x="370" y="596" width="116" height="34"/>
+  <text class="recommend" x="428" y="619" text-anchor="middle">Low Signal</text>
+  <text class="quad-title" x="370" y="670">Low-Signal Pattern</text>
+  <text class="body" x="370" y="735">No prominent difficulty is observed in either self-report or behavioral tasks</text>
+  <text class="recommend" x="370" y="830">Do not make a definitive conclusion; check context if needed</text>
+
+  <rect class="tag" x="930" y="596" width="132" height="34"/>
+  <text class="recommend" x="996" y="619" text-anchor="middle">Disagreement</text>
+  <text class="quad-title" x="930" y="670">Performance Instability-Dominant Pattern</text>
+  <text class="body" x="930" y="735">Self-report is low, but instability is observed in task performance</text>
+  <text class="recommend" x="930" y="830">Check sleep, fatigue, device environment, and task understanding</text>
+
+  <rect class="note-box" x="130" y="970" width="1340" height="88"/>
+  <text class="note" x="800" y="1020" text-anchor="middle">This matrix is not for ADHD diagnosis. It is an interpretation structure for screening and self-understanding support.</text>
+</svg>

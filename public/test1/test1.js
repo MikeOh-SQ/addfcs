@@ -87,12 +87,12 @@ function setGuideButtonVisible(visible) {
 function updateScoreboard() {
   if (!record) {
     userChip.textContent = "사용자 없음";
-    totalScoreChip.textContent = "숲 점수 0점";
+    totalScoreChip.textContent = "숲 포인트 0";
     return;
   }
   const dtx = ensureDtx(record);
   userChip.textContent = record.id;
-  totalScoreChip.textContent = `숲 점수 ${dtx.totalScore}점`;
+  totalScoreChip.textContent = `숲 포인트 ${dtx.totalScore}`;
 }
 
 function goForest() {
@@ -240,7 +240,7 @@ function renderResult() {
     updateScoreboard();
   }
   resultTotal.textContent = record
-    ? `숲 누적 점수 ${ensureDtx(record).totalScore}점 · 이번 획득 ${correct}점`
+    ? `숲 누적 포인트 ${ensureDtx(record).totalScore} · 이번 획득 ${correct}`
     : `이번 획득 ${correct}점`;
   progress.textContent = "종료";
   hint.textContent = "다시하기 또는 숲으로 돌아가기";

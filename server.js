@@ -8,6 +8,7 @@ loadEnvFile(path.join(__dirname, ".env"));
 const rootDir = __dirname;
 const publicDir = path.join(rootDir, "public");
 const imagesDir = path.join(rootDir, "images");
+const newImagesDir = path.join(rootDir, "newimages");
 const dsmImagesDir = path.join(rootDir, "dsmimages");
 const gameImagesDir = path.join(rootDir, "game", "images");
 const gameScriptsDir = path.join(rootDir, "game", "scripts");
@@ -16,6 +17,7 @@ const test2ImagesDir = path.join(rootDir, "game", "test2");
 const test3ImagesDir = path.join(rootDir, "game", "test3");
 const configDir = path.join(rootDir, "config");
 const databaseDir = path.join(rootDir, "database");
+const designMdDir = path.join(rootDir, "designmd");
 const mapLayoutFilePath = path.join(databaseDir, "map-layout.json");
 const geminiApiKey = process.env.GEMINI_API_KEY || "";
 const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -111,11 +113,140 @@ function getMapAssetVersion() {
   return String(Math.floor(latestMtime || Date.now()));
 }
 
+function extractFrontMatter(raw) {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  return match ? match[1] : "";
+}
+
+function parseDesignScalar(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  if (trimmed === "true") {
+    return true;
+  }
+  if (trimmed === "false") {
+    return false;
+  }
+  return trimmed;
+}
+
+function parseIndentedYamlBlock(source) {
+  const root = {};
+  const stack = [{ indent: -1, obj: root }];
+  const lines = String(source || "").split(/\r?\n/);
+
+  for (const line of lines) {
+    if (!line.trim() || line.trim().startsWith("#")) {
+      continue;
+    }
+
+    const indent = line.match(/^\s*/)?.[0]?.length || 0;
+    const trimmed = line.trim();
+    const separatorIndex = trimmed.indexOf(":");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const rawValue = trimmed.slice(separatorIndex + 1).trim();
+
+    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
+      stack.pop();
+    }
+
+    const parent = stack[stack.length - 1].obj;
+    if (!rawValue) {
+      parent[key] = {};
+      stack.push({ indent, obj: parent[key] });
+      continue;
+    }
+
+    parent[key] = parseDesignScalar(rawValue);
+  }
+
+  return root;
+}
+
+function getTokenPathValue(source, tokenPath) {
+  return String(tokenPath || "")
+    .split(".")
+    .reduce((current, part) => (current && typeof current === "object" ? current[part] : undefined), source);
+}
+
+function resolveTokenReferences(value, tokenSource) {
+  if (Array.isArray(value)) {
+    return value.map((item) => resolveTokenReferences(item, tokenSource));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, itemValue]) => [key, resolveTokenReferences(itemValue, tokenSource)])
+    );
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const tokenMatch = value.match(/^\{(.+)\}$/);
+  if (!tokenMatch) {
+    return value;
+  }
+
+  const resolved = getTokenPathValue(tokenSource, tokenMatch[1]);
+  return resolved === undefined ? value : resolved;
+}
+
+function makeDesignSlug(fileName) {
+  return String(fileName || "")
+    .replace(/^design-/i, "")
+    .replace(/\.md$/i, "")
+    .trim()
+    .toLowerCase();
+}
+
+function parseDesignThemeFile(fileName) {
+  const filePath = safeJoin(designMdDir, fileName);
+  const raw = fs.readFileSync(filePath, "utf-8");
+  const frontMatter = parseIndentedYamlBlock(extractFrontMatter(raw));
+  const resolved = resolveTokenReferences(frontMatter, frontMatter);
+
+  return {
+    slug: makeDesignSlug(fileName),
+    fileName,
+    filePath,
+    name: frontMatter.name || makeDesignSlug(fileName),
+    version: frontMatter.version || "unknown",
+    description: frontMatter.description || "",
+    tokens: frontMatter,
+    resolved
+  };
+}
+
+function listDesignThemes() {
+  if (!fs.existsSync(designMdDir)) {
+    return [];
+  }
+
+  return fs.readdirSync(designMdDir)
+    .filter((fileName) => /^design-.*\.md$/i.test(fileName))
+    .sort((a, b) => a.localeCompare(b))
+    .map((fileName) => parseDesignThemeFile(fileName));
+}
+
 function serveStatic(reqPath, res) {
   const baseDir = reqPath.startsWith("/images/")
     ? imagesDir
-    : reqPath.startsWith("/dsmimages/")
-      ? dsmImagesDir
+    : reqPath.startsWith("/newimages/")
+      ? newImagesDir
+      : reqPath.startsWith("/dsmimages/")
+        ? dsmImagesDir
       : reqPath.startsWith("/game/images/")
         ? gameImagesDir
         : reqPath.startsWith("/game/scripts/")
@@ -137,6 +268,8 @@ function serveStatic(reqPath, res) {
     ? "index.html"
     : reqPath.startsWith("/images/")
       ? reqPath.replace("/images/", "")
+      : reqPath.startsWith("/newimages/")
+        ? reqPath.replace("/newimages/", "")
       : reqPath.startsWith("/dsmimages/")
         ? reqPath.replace("/dsmimages/", "")
       : reqPath.startsWith("/game/images/")
@@ -271,7 +404,7 @@ function analyzeDsmRecord(record) {
       hyperactivityYesCount: Number(raw.hyperactivity_true_count || 0),
       contextualYesCount: Number(raw.contextual_true_count || 0),
       totalYesCount: Number(raw.total_true_count || 0),
-      subtype: raw.subtype || "판정 보류"
+      subtype: raw.subtype || "패턴 확인 중"
     };
   }
 
@@ -281,16 +414,16 @@ function analyzeDsmRecord(record) {
   const hyperactivityYesCount = answered.slice(9).filter((item) => item.answer).length;
   const contextualYesCount = answered.slice(18).filter((item) => item.answer).length;
 
-  let subtype = "판정 보류";
+  let subtype = "패턴 확인 중";
   if (answered.length >= 18) {
     if (inattentionYesCount >= 6 && hyperactivityYesCount >= 6) {
-      subtype = "복합형 가능성";
+      subtype = "복합 실행 기능 패턴";
     } else if (inattentionYesCount >= 6) {
-      subtype = "부주의형 가능성";
+      subtype = "집중 유지 부담 패턴";
     } else if (hyperactivityYesCount >= 6) {
-      subtype = "과잉행동/충동형 가능성";
+      subtype = "반응 조절 부담 패턴";
     } else {
-      subtype = "무증상 범위";
+      subtype = "큰 부담 낮음";
     }
   }
 
@@ -307,6 +440,15 @@ function analyzeDsmRecord(record) {
 function computeAssessmentMetrics(record) {
   const asrsAnswers = getAsrsResponses(record);
   const dsm = analyzeDsmRecord(record);
+  const hasAsrsSurvey = asrsAnswers.length > 0;
+  const hasDsmSurvey = getDsmResponses(record).length > 0 || Number(dsm.answeredCount || 0) > 0;
+  const surveyMode = hasAsrsSurvey && hasDsmSurvey
+    ? "both"
+    : hasAsrsSurvey
+      ? "asrs"
+      : hasDsmSurvey
+        ? "dsm"
+        : "none";
   const game = record.tests?.game || {};
   const signal = game.tests?.signal_detection || {};
   const goNogo = game.tests?.go_nogo || {};
@@ -361,22 +503,35 @@ function computeAssessmentMetrics(record) {
     || Number.isFinite(Number(balance.spike_count))
     || Number.isFinite(Number(balance.large_motion_count));
   const objectiveDomain = omissionRate >= commissionRate ? "부주의" : "충동성";
-  const subjectiveDomain = attentionPositiveCount >= impulsePositiveCount ? "부주의" : "충동성";
+  const subjectiveDomain = hasAsrsSurvey
+    ? (attentionPositiveCount >= impulsePositiveCount ? "부주의" : "충동성")
+    : hasDsmSurvey
+      ? (dsm.inattentionYesCount >= dsm.hyperactivityYesCount ? "부주의" : "충동성")
+      : objectiveDomain;
   const alignment = Math.abs(omissionRate - commissionRate) < 0.12 && attentionPositiveCount === impulsePositiveCount
     ? "혼합"
     : subjectiveDomain === objectiveDomain
       ? "일치"
       : "불일치";
-  const dsmImpactScore = dsm.totalYesCount + dsm.contextualYesCount * 2;
+  const dsmImpactScore = hasDsmSurvey
+    ? dsm.totalYesCount + dsm.contextualYesCount * 2
+    : asrsPositiveCount;
   const dailyImpactLevel = Math.max(1, Math.min(5, Math.ceil(dsmImpactScore / 4) || 1));
 
-  const severity = asrsPositiveCount >= 4 || dsm.inattentionYesCount >= 6 || dsm.hyperactivityYesCount >= 6 || dsmYesCount >= 8
+  const surveySeverityHigh = (hasAsrsSurvey && asrsPositiveCount >= 4)
+    || (hasDsmSurvey && (dsm.inattentionYesCount >= 6 || dsm.hyperactivityYesCount >= 6 || dsmYesCount >= 8));
+  const surveySeverityMedium = (hasAsrsSurvey && asrsPositiveCount >= 2)
+    || (hasDsmSurvey && dsmYesCount >= 4);
+  const severity = surveySeverityHigh
     ? "높음"
-    : asrsPositiveCount >= 2 || dsmYesCount >= 4
+    : surveySeverityMedium
       ? "중간"
       : "낮음";
 
   return {
+    surveyMode,
+    hasAsrsSurvey,
+    hasDsmSurvey,
     asrsAverage: Number(asrsAverage.toFixed(2)),
     asrsPositiveCount,
     attentionPositiveCount,
@@ -421,10 +576,10 @@ function computeAssessmentMetrics(record) {
 function buildProfileBadges(metrics) {
   const badges = [];
 
-  if (metrics.asrsAttentionScore >= 10 || metrics.omissionRate >= 0.2) {
+  if (metrics.asrsAttentionScore >= 10 || metrics.dsmInattentionYesCount >= 6 || metrics.omissionRate >= 0.2) {
     badges.push("#주의력충전필요");
   }
-  if (metrics.asrsImpulseScore >= 5 || metrics.commissionRate >= 0.2) {
+  if (metrics.asrsImpulseScore >= 5 || metrics.dsmHyperactivityYesCount >= 6 || metrics.commissionRate >= 0.2) {
     badges.push("#반응속도조절중");
   }
   if (metrics.reactionVariability >= 180 || metrics.tau >= 250) {
@@ -545,39 +700,49 @@ function buildPlanForMetrics(metrics) {
 function buildDeterministicReport(metrics) {
   const badges = buildProfileBadges(metrics);
   const plan = buildPlanForMetrics(metrics);
+  const surveyLabel = metrics.surveyMode === "dsm"
+    ? "23문항 세부 설문"
+    : metrics.surveyMode === "asrs"
+      ? "6문항 간단 설문"
+      : "자가보고 설문";
+  const subjectiveBasis = metrics.surveyMode === "dsm"
+    ? `세부 설문에서는 집중 유지 영역 ${metrics.dsmInattentionYesCount}개, 반응 조절 영역 ${metrics.dsmHyperactivityYesCount}개가 체크됐어요.`
+    : `간단 설문에서는 집중 유지 응답 지표 ${metrics.asrsAttentionScore}/16, 반응 조절 응답 지표 ${metrics.asrsImpulseScore}/8로 기록됐어요.`;
+  const subjectiveDomainLabel = metrics.subjectiveDomain === "부주의" ? "집중 유지" : "반응 조절";
+  const objectiveDomainLabel = metrics.objectiveDomain === "부주의" ? "집중 유지" : "반응 조절";
   const heroSummary = metrics.severity === "높음"
-    ? "설문과 반응성 검사에서 목표를 놓치거나 멈춰야 할 때 반응하는 패턴이 함께 보여요. 다만 이는 진단이 아니라 현재 반응 경향을 정리한 선별 결과예요."
+    ? `${surveyLabel}과 반응성 과제에서 주의·집중과 실행 기능 부담이 비교적 크게 나타났어요. 의학적 진단이 아니라 현재 패턴을 쉽게 정리한 참고 리포트예요.`
     : metrics.severity === "중간"
-      ? "몇몇 상황에서 집중 유지나 멈추는 조절이 흔들릴 수 있는 신호가 보여요. 생활 맥락과 함께 보면 더 정확한 이해에 도움이 됩니다."
-      : "현재 선별 결과만 보면 전반적 반응 패턴은 비교적 안정적으로 보여요. 그래도 피로, 수면, 환경 변화에 따라 체감은 달라질 수 있어요.";
+      ? `${surveyLabel}에서 몇 가지 일상 어려움이 나타났어요. 반응성 과제까지 함께 보면 어떤 상황에서 흔들리는지 더 구체적으로 볼 수 있어요.`
+      : `${surveyLabel}만 보면 큰 부담은 높지 않아 보여요. 그래도 피로, 수면, 환경 변화에 따라 체감은 달라질 수 있어요.`;
   const subjectiveText = metrics.subjectiveDomain === "부주의"
-    ? `자가보고 선별에서는 부주의 쪽 신호가 조금 더 두드러졌어요. 특히 시작 지연이나 마감 직전까지 집중을 붙잡는 과정에서 부담이 있을 수 있어요.`
-    : `자가보고 선별에서는 충동성 또는 빠른 반응 쪽 신호가 조금 더 강조됐어요. 기다리기 어렵거나 반응을 먼저 내보내는 순간이 있을 수 있어요.`;
+    ? `${subjectiveBasis} 특히 시작이 늦어지거나, 하던 일을 끝까지 붙잡는 과정에서 부담이 있었을 수 있어요.`
+    : `${subjectiveBasis} 기다리기 어렵거나, 생각보다 반응이 먼저 나가는 순간이 있었을 수 있어요.`;
   const objectiveText = metrics.signalHasDetail || metrics.goNogoHasDetail
     ? [
       metrics.signalHasDetail
         ? `신호 찾기에서는 목표 놓침 비율 ${formatPercent(metrics.omissionRate)}, 반응시간 변동성 ${reactionVariabilityOrZero(metrics)}ms, 느리게 처지는 반응 폭 ${Number(metrics.tau || 0)}ms 수준이었어요.`
-        : `신호 찾기 점수는 ${Number(metrics.signal.score || 0)}점이었어요.`,
+        : `신호 찾기 수행 지표는 ${Number(metrics.signal.score || 0)}점이었어요.`,
       metrics.goNogoHasDetail
         ? `Go/No-Go에서는 잘못된 반응 비율 ${formatPercent(metrics.commissionRate)}, 성급 반응 비율 ${formatPercent(metrics.fastErrorRate)}로 기록됐어요.`
-        : `Go/No-Go 점수는 ${Number(metrics.goNogo.score || 0)}점이었어요.`
+        : `Go/No-Go 수행 지표는 ${Number(metrics.goNogo.score || 0)}점이었어요.`
     ].join(" ")
     : metrics.objectiveDomain === "부주의"
-      ? `반응성 테스트에서는 부주의 쪽 점수가 상대적으로 더 낮게 나타났어요. 순간 집중의 일관성을 확인해 볼 필요가 있어요.`
-      : `반응성 테스트에서는 충동성보다 멈추는 조절은 비교적 안정적이었어요.`;
+      ? `반응성 과제에서는 집중 유지 지표가 상대적으로 더 낮게 나타났어요. 순간 집중의 일관성을 확인해 볼 필요가 있어요.`
+      : `반응성 과제에서는 멈추는 조절이 비교적 안정적으로 나타났어요.`;
   const alignmentSummary = metrics.alignment === "일치"
     ? "스스로 느끼는 어려움과 측정된 반응 패턴이 비슷한 방향을 보여줘요."
     : metrics.alignment === "불일치"
-      ? "평소 체감과 검사 상황의 반응이 다르게 나타났어요. 환경, 긴장도, 과제 유형 차이의 영향을 함께 볼 필요가 있어요."
-      : "부주의와 충동성 신호가 함께 섞여 보여서 한쪽으로 단정하기보다 상황별 차이를 함께 보는 편이 좋아요.";
+      ? "평소 체감과 과제 상황의 반응이 다르게 나타났어요. 환경, 긴장도, 과제 유형 차이의 영향을 함께 볼 필요가 있어요."
+      : "집중 유지와 반응 조절 패턴이 함께 섞여 보여서 한쪽으로 단정하기보다 상황별 차이를 함께 보는 편이 좋아요.";
   const inattentionSummary = metrics.signalHasDetail
-    ? `부주의 영역에서는 자가보고 부주의 점수 ${metrics.asrsAttentionScore}/16과 함께 목표 놓침 비율 ${formatPercent(metrics.omissionRate)}, 반응시간 변동성 ${reactionVariabilityOrZero(metrics)}ms, 후반부 정확도 저하 ${formatPercent(metrics.latePhaseDrop)}를 함께 보고 있어요. 저장된 수치만 보면 ${metrics.omissionRate >= 0.18 || metrics.reactionVariability >= 180 || metrics.tau >= 250 ? "집중 유지의 일관성을 점검할 필요가 있어 보여요." : "객관 지표는 비교적 안정적이지만 체감 부담은 높을 수 있어요."}`
-    : `부주의 영역에서는 자가보고 부주의 점수 ${metrics.asrsAttentionScore}/16과 신호 찾기 점수 ${Number(metrics.signal.score || 0)}점을 함께 참고하고 있어요. 현재 JSON에는 세부 오류 수치가 없어 점수 수준 중심으로 해석하고 있어요.`;
+    ? `집중 유지 영역은 ${surveyLabel}의 응답과 목표 놓침 비율 ${formatPercent(metrics.omissionRate)}, 반응시간 변동성 ${reactionVariabilityOrZero(metrics)}ms를 함께 본 결과예요. ${metrics.omissionRate >= 0.18 || metrics.reactionVariability >= 180 || metrics.tau >= 250 ? "집중을 일정하게 유지하는 부분을 천천히 점검해 볼 만해요." : "반응성 지표는 비교적 안정적이지만, 평소 체감은 다를 수 있어요."}`
+    : `집중 유지 영역은 ${surveyLabel}의 응답과 신호 찾기 수행 지표 ${Number(metrics.signal.score || 0)}점을 함께 참고했어요. 현재는 세부 오류 수치가 없어 수행 지표 중심으로만 조심스럽게 해석해요.`;
   const impulsivitySummary = metrics.goNogoHasDetail
-    ? `충동성 영역에서는 자가보고 충동성 점수 ${metrics.asrsImpulseScore}/8과 함께 잘못된 반응 비율 ${formatPercent(metrics.commissionRate)}, 성급 반응 비율 ${formatPercent(metrics.fastErrorRate)}가 저장돼 있어요. 저장된 수치만 보면 ${metrics.commissionRate >= 0.18 ? "속도보다 멈추는 조절을 더 신경 쓸 필요가 있어 보여요." : "억제 조절은 비교적 안정적으로 보입니다."}`
-    : `충동성 영역에서는 자가보고 충동성 점수 ${metrics.asrsImpulseScore}/8과 Go/No-Go 점수 ${Number(metrics.goNogo.score || 0)}점을 함께 보고 있어요. 현재 JSON에는 세부 오류 수치가 없어 점수 수준 중심으로 해석하고 있어요.`;
+    ? `반응 조절 영역은 ${surveyLabel}의 응답과 잘못된 반응 비율 ${formatPercent(metrics.commissionRate)}, 성급 반응 비율 ${formatPercent(metrics.fastErrorRate)}를 함께 본 결과예요. ${metrics.commissionRate >= 0.18 ? "빠르게 누르는 것보다 잠깐 멈추는 연습이 도움이 될 수 있어요." : "멈추는 조절은 비교적 안정적으로 보여요."}`
+    : `반응 조절 영역은 ${surveyLabel}의 응답과 Go/No-Go 수행 지표 ${Number(metrics.goNogo.score || 0)}점을 함께 참고했어요. 현재는 세부 오류 수치가 없어 수행 지표 중심으로만 조심스럽게 해석해요.`;
   const hyperactivitySummary = metrics.balanceHasDetail
-    ? `균형 유지 테스트에서는 안정 유지 시간 ${roundTo(metrics.stableDurationPct, 1)}%, 큰 흔들림 ${Number(metrics.spikeCount || 0)}회로 기록됐어요. 이 영역은 보조 참고 정보로만 활용하는 것이 적절해요.`
+    ? `균형 유지 과제에서는 안정 유지 시간 ${roundTo(metrics.stableDurationPct, 1)}%, 큰 흔들림 ${Number(metrics.spikeCount || 0)}회로 기록됐어요. 이 영역은 보조 참고 정보로만 활용하는 것이 적절해요.`
     : "";
   const empathy = metrics.dailyImpactLevel >= 4
     ? "이 정도 패턴이면 일상에서 해야 할 일을 따라가는 것만으로도 꽤 많은 에너지가 들었을 수 있어요. 스스로를 탓하기보다 부담이 커지는 상황을 먼저 알아차리는 것이 중요해요."
@@ -592,16 +757,16 @@ function buildDeterministicReport(metrics) {
       sections: {
         summary: heroSummary,
         strength: "구조를 만들면 수행이 안정될 여지가 보이고, 관심이 생기는 과제에서는 몰입이 보호 요인으로 작동할 수 있어요.",
-        watchout: "선별 결과만으로 단정할 수는 없고 수면, 스트레스, 불안·우울 같은 다른 요인도 함께 살펴봐야 해요."
+        watchout: "이 리포트만으로 단정할 수는 없고 수면, 스트레스, 불안·우울 같은 다른 요인도 함께 살펴봐야 해요. 의학적 진단이 아니라 자기점검 참고 자료입니다."
       },
       hero: {
         badges,
         summary: heroSummary
       },
       crossCheck: {
-        subjectiveTitle: `주관적 보고는 ${metrics.subjectiveDomain} 쪽이 더 크게 느껴져요`,
+        subjectiveTitle: `${surveyLabel}에서는 ${subjectiveDomainLabel} 쪽 부담이 더 보여요`,
         subjectiveText,
-        objectiveTitle: `객관적 반응은 ${metrics.objectiveDomain} 신호가 더 보여요`,
+        objectiveTitle: `수행 과제에서는 ${objectiveDomainLabel} 쪽 패턴이 더 보여요`,
         objectiveText,
         alignmentLabel: buildAlignmentLabel(metrics.alignment),
         alignmentSummary
@@ -617,7 +782,7 @@ function buildDeterministicReport(metrics) {
         empathy
       },
       bridge: {
-        cta: "나만의 맞춤 훈련 설계하기"
+        cta: "내 패턴에 맞춘 실천 계획 보기"
       }
     },
     plan
@@ -708,34 +873,42 @@ function normalizePlanSuggestions(values, fallbackValues = []) {
 }
 
 function buildInsightsPrompt(record, metrics) {
+  const selectedSurvey = metrics.surveyMode === "dsm"
+    ? "사용자는 23문항 세부 설문만 선택했습니다. ASRS 값이 비어 있으면 사용하지 마세요."
+    : metrics.surveyMode === "asrs"
+      ? "사용자는 6문항 간단 설문만 선택했습니다. DSM 값이 비어 있으면 사용하지 마세요."
+      : "사용자가 선택해 완료한 설문만 근거로 사용하세요.";
   return [
-    "서비스: ADHDQQ.COM ADHD 선별/감별 보조 모바일 웹 앱",
-    "중요: 진단 확정 표현 금지, 선별 결과와 권고 수준으로 작성",
+    "서비스: ADDFCS.COM 주의·집중·실행 기능 패턴 자기점검 모바일 웹 앱",
+    "참고 정보: ADHD는 배경 설명에서만 언급하고 사용자를 ADHD로 판정하거나 의심군처럼 표현하지 말 것",
+    "중요: 의학적 진단, 판별, 위험군, 정상/비정상 표현 금지. 자기점검 참고 리포트와 전문가 상담 고려 수준으로 작성",
     "어조: 따뜻하고 전문적인 임상심리사처럼, 부드러운 경어체 한국어 사용",
-    "표현 지침: '목표 놓침(부주의)', '잘못된 반응(충동성)'처럼 쉬운 말로 설명",
-    "교차 분석 지침: 사용자가 느끼는 결과(자가보고 선별)와 게임 기반 객관 지표(반응성 테스트)가 일치하는지 분명히 짚기",
+    "표현 지침: '목표 놓침', '멈춰야 할 때 누른 반응'처럼 쉬운 말로 설명",
+    "교차 분석 지침: 사용자가 느끼는 일상 어려움과 게임 기반 수행 지표가 비슷한지 분명히 짚기",
+    `선택 설문 지침: ${selectedSurvey}`,
+    "결과 구조 지침: 사용자는 ASRS와 DSM 중 하나만 선택해서 진행합니다. 리포트와 플랜에서 두 설문을 모두 완료한 것처럼 말하지 말 것",
     "수치 사용 지침: JSON에 실제 존재하는 숫자만 인용하고, 없는 오류 횟수나 반응시간은 추정해서 쓰지 말 것",
-    "자가보고 선별 판정 기준:",
-    "- 1, 2, 3번 문항은 가끔(2) 이상이면 유의미한 증상",
-    "- 4, 5, 6번 문항은 자주(3) 이상이면 유의미한 증상",
-    "- 유의미한 문항이 4개 이상이면 성인 ADHD 가능성이 비교적 높은 편으로 해석",
-    "- 주의력 결핍 관련 문항: 1, 2, 3, 4번",
-    "- 과잉행동/충동성 관련 문항: 5, 6번",
-    "증상 기준 체크 판정 기준:",
-    "- 총 18문항, 부주의 9문항과 과잉행동/충동성 9문항으로 구성",
-    "- 부주의 6개 이상 Yes, 과잉행동/충동성 6개 미만 Yes면 부주의형 가능성",
-    "- 과잉행동/충동성 6개 이상 Yes, 부주의 6개 미만 Yes면 과잉행동/충동형 가능성",
-    "- 두 영역 모두 6개 이상 Yes면 복합형 가능성",
-    "- 본 결과는 진단이 아니라 참고용 선별 결과로만 설명",
+    "간단 자기점검 해석 기준:",
+    "- 1, 2, 3번 문항은 가끔(2) 이상이면 일상 부담 응답으로 참고",
+    "- 4, 5, 6번 문항은 자주(3) 이상이면 일상 부담 응답으로 참고",
+    "- 부담 응답이 4개 이상이면 주의·집중 또는 실행 기능 부담이 비교적 크게 나타난 패턴으로 해석",
+    "- 집중 유지 관련 문항: 1, 2, 3, 4번",
+    "- 반응 조절 관련 문항: 5, 6번",
+    "세부 자기점검 해석 기준:",
+    "- 총 18문항, 집중 유지 9문항과 반응 조절 9문항으로 구성",
+    "- 집중 유지 6개 이상 Yes, 반응 조절 6개 미만 Yes면 집중 유지 부담 패턴",
+    "- 반응 조절 6개 이상 Yes, 집중 유지 6개 미만 Yes면 반응 조절 부담 패턴",
+    "- 두 영역 모두 6개 이상 Yes면 복합 실행 기능 패턴",
+    "- 본 결과는 의학적 진단이 아니라 참고용 자기점검 리포트로만 설명",
     "실행계획 작성 기준:",
     "- 대상은 성인 사용자로 가정하고, 아동/청소년용 표현이나 보호자 지시는 쓰지 말 것",
     "- plan.suggestions는 반드시 3개만 작성",
     "- 각 제안은 시간 또는 타이밍, 장소, 하나의 구체적 행동 단위가 드러나야 함",
     "- 의료적 처방, 진단, 치료 지시처럼 쓰지 말고 일상 코칭 언어로 작성",
-    "- 부주의 경향이 두드러지면 과제 분할, 시각적 단서, 환경 통제, 시작 장벽 낮추기 전략을 사용",
-    "- 과잉행동/충동성 경향이 두드러지면 지연 행동, 자기 점검, 심호흡, 행동 전 메모 전략을 사용",
-    "- 복합형이면 부주의 보완 전략과 충동 조절 전략을 섞어서 제안",
-    "- 낮음 또는 안정 범위이면 현재 상태를 유지하는 작고 반복 가능한 생활 루틴을 제안",
+    "- 집중 유지 부담이 두드러지면 과제 분할, 시각적 단서, 환경 통제, 시작 장벽 낮추기 전략을 사용",
+    "- 반응 조절 부담이 두드러지면 지연 행동, 자기 점검, 심호흡, 행동 전 메모 전략을 사용",
+    "- 복합 실행 기능 패턴이면 집중 유지 보완 전략과 반응 조절 전략을 섞어서 제안",
+    "- 큰 부담이 낮으면 현재 흐름을 유지하는 작고 반복 가능한 생활 루틴을 제안",
     "- '인지행동치료', '작업 기억력', 'MBSR' 같은 학술 용어는 사용자 문장에 직접 쓰지 말고 쉬운 말로 풀어 쓸 것",
     "대상 기록 JSON:",
     JSON.stringify(record, null, 2),
@@ -745,15 +918,15 @@ function buildInsightsPrompt(record, metrics) {
     "1. report.severity는 낮음/중간/높음 중 하나",
     "2. report.hero.badges는 짧은 해시태그 2~3개",
     "3. report.hero.summary는 전체 결과를 아우르는 1~2문장 핵심 요약",
-    "4. report.crossCheck.subjectiveTitle, subjectiveText는 자가보고 선별 기준의 체감 증상 설명",
-    "5. report.crossCheck.objectiveTitle, objectiveText는 반응성 테스트 기준의 객관 반응 설명",
+    "4. report.crossCheck.subjectiveTitle, subjectiveText는 사용자가 선택한 설문 하나를 기준으로 한 일상 어려움 설명",
+    "5. report.crossCheck.objectiveTitle, objectiveText는 반응성 과제 기준의 수행 패턴 설명",
     "6. report.crossCheck.alignmentLabel은 일치 여부를 보여주는 짧은 뱃지 문구",
     "7. report.crossCheck.alignmentSummary는 두 결과의 일치/불일치를 해석하는 1~2문장",
-    "8. report.profile.inattentionSummary는 자가보고 부주의 점수와 목표 놓침/반응시간 변동성 지표를 종합한 설명",
-    "9. report.profile.impulsivitySummary는 자가보고 충동성 점수와 잘못된 반응 지표를 종합한 설명",
-    "10. report.dailyImpact.empathy는 증상 기준 체크 결과를 바탕으로 한 일상 피로도 공감 메시지",
+    "8. report.profile.inattentionSummary는 선택한 설문 응답과 목표 놓침/반응시간 변동성 지표를 쉬운 말로 종합한 설명",
+    "9. report.profile.impulsivitySummary는 선택한 설문 응답과 잘못된 반응 지표를 쉬운 말로 종합한 설명",
+    "10. report.dailyImpact.empathy는 선택한 설문 결과를 바탕으로 한 일상 피로도 공감 메시지",
     "11. report.sections.strength는 보호 요인과 강점 신호",
-    "12. report.sections.watchout는 선별 도구 한계와 추가 평가 필요성",
+    "12. report.sections.watchout는 자기점검 도구의 한계와 전문가 상담 고려 안내",
     "13. plan.suggestions는 위 실행계획 기준을 지킨 한국어 문장 3개",
     "14. plan.openingMessage는 사용자가 생활 패턴에 맞춰 계획 수정을 요청할 수 있게 유도하는 1~2문장"
   ].join("\n");
@@ -761,14 +934,14 @@ function buildInsightsPrompt(record, metrics) {
 
 function buildChatPrompt(record, message, metrics) {
   return [
-    "서비스: ADHDQQ.COM ADHD 선별/감별 보조 모바일 웹 앱",
-    "역할: 성인 ADHD 선별 결과와 현재 실행계획을 바탕으로 사용자의 계획을 현실적으로 조정하는 한국어 행동 코치",
-    "중요: 진단 확정 표현 금지, 의료행위처럼 말하지 말 것",
+    "서비스: ADDFCS.COM 주의·집중·실행 기능 패턴 자기점검 모바일 웹 앱",
+    "역할: 자기점검 리포트와 현재 실행계획을 바탕으로 사용자의 계획을 현실적으로 조정하는 한국어 행동 코치",
+    "중요: 의학적 진단 표현 금지, 의료행위처럼 말하지 말 것",
     "응답 기준:",
     "- 사용자의 실제 생활 조건에 맞춰 시간, 장소, 행동 단위를 더 작게 조정",
     "- 한 번에 여러 행동을 시키지 말고 가장 작은 다음 행동 1개를 우선 제안",
-    "- 부주의 경향은 과제 분할, 시각적 단서, 환경 통제 중심으로 조정",
-    "- 충동성 경향은 지연 행동, 자기 점검, 심호흡, 행동 전 메모 중심으로 조정",
+    "- 집중 유지 부담은 과제 분할, 시각적 단서, 환경 통제 중심으로 조정",
+    "- 반응 조절 부담은 지연 행동, 자기 점검, 심호흡, 행동 전 메모 중심으로 조정",
     "현재 기록:",
     JSON.stringify(record, null, 2),
     "계산된 핵심 지표:",
@@ -783,78 +956,90 @@ function buildChatPrompt(record, message, metrics) {
 
 function buildAsrsAnalysisPrompt(record, analysis, metrics) {
   return [
-    "서비스: ADHDQQ.COM ADHD 선별/감별 보조 모바일 웹 앱",
-    "역할: 자가보고 선별 결과를 짧고 공감적으로 해석하는 한국어 선별 보조 AI",
-    "중요: 진단 확정 표현 금지, 선별 결과와 추가 평가 권고 수준으로만 작성",
-    "자가보고 선별 기준:",
+    "서비스: ADDFCS.COM 주의·집중·실행 기능 패턴 자기점검 모바일 웹 앱",
+    "역할: 간단 자기점검 응답을 짧고 공감적으로 해석하는 한국어 자기점검 보조 AI",
+    "중요: 의학적 진단 표현 금지, 일상 패턴 탐색과 전문가 상담 고려 수준으로만 작성",
+    "사용자 흐름: 이 사용자는 6문항 간단 설문을 선택했습니다. 이 다음에는 DSM이 아니라 반응성 과제로 이동합니다.",
+    "표현 지침: 어려운 용어보다 쉬운 일상어를 쓰고, 사용자를 평가하지 말고 함께 확인하는 말투로 작성",
+    "간단 자기점검 기준:",
     "- 1, 2, 3번 문항은 가끔(2) 이상이면 유의미",
     "- 4, 5, 6번 문항은 자주(3) 이상이면 유의미",
-    "- 유의미 문항 4개 이상이면 추가 평가를 적극 고려할 수 있는 수준",
+    "- 부담 응답 4개 이상이면 주의·집중 또는 실행 기능 부담이 비교적 크게 나타난 패턴",
     "기록 JSON:",
     JSON.stringify(record, null, 2),
-    "계산된 자가보고 선별 해석용 지표:",
+    "계산된 간단 자기점검 해석용 지표:",
     JSON.stringify(analysis, null, 2),
-    "보조 점수:",
+    "보조 지표:",
     JSON.stringify(metrics, null, 2),
     "요청:",
-    "1. summary는 전체 경향을 2문장 이내로 요약",
-    "2. attention는 주의력 결핍 관련 강도를 2문장 이내로 설명",
-    "3. hyperactivity는 과잉행동/충동성 관련 강도를 2문장 이내로 설명",
-    "4. guidance는 선별 도구 한계와 다음 단계 권고를 2문장 이내로 설명",
+    "1. summary는 전체 경향을 초등 고학년도 이해할 수 있는 쉬운 말로 2문장 이내 요약",
+    "2. attention는 집중을 유지하거나 일을 시작하는 어려움 관점에서 2문장 이내 설명",
+    "3. hyperactivity는 기다리기, 멈추기, 빠른 반응 관점에서 2문장 이내 설명",
+    "4. guidance는 간단 설문의 한계와 다음 단계인 반응성 과제 안내를 2문장 이내로 설명",
     "5. 한국어로만 작성"
   ].join("\n");
 }
 
 function buildDsmAnalysisPrompt(record, analysis, metrics) {
   return [
-    "서비스: ADHDQQ.COM ADHD 선별/감별 보조 모바일 웹 앱",
-    "역할: 증상 기준 체크 결과를 짧고 공감적으로 해석하는 한국어 선별 보조 AI",
-    "중요: 진단 확정 표현 금지, 선별 결과와 추가 평가 권고 수준으로만 작성",
-    "증상 기준 체크 판정 기준:",
-    "- 부주의 9문항 중 6개 이상 Yes면 부주의형 가능성",
-    "- 과잉행동/충동성 9문항 중 6개 이상 Yes면 과잉행동/충동형 가능성",
-    "- 두 영역이 모두 6개 이상 Yes면 복합형 가능성",
-    "- 두 영역 모두 6개 미만 Yes면 무증상 범위로 설명",
-    "- 본 결과는 진단이 아니라 현재 상태를 참고하기 위한 것입니다.",
+    "서비스: ADDFCS.COM 주의·집중·실행 기능 패턴 자기점검 모바일 웹 앱",
+    "역할: 세부 자기점검 결과를 짧고 공감적으로 해석하는 한국어 자기점검 보조 AI",
+    "중요: 의학적 진단 표현 금지, 일상 패턴 탐색과 전문가 상담 고려 수준으로만 작성",
+    "사용자 흐름: 이 사용자는 23문항 세부 설문을 선택했습니다. 이 다음에는 ASRS가 아니라 반응성 과제로 이동합니다.",
+    "표현 지침: 어려운 용어보다 쉬운 일상어를 쓰고, 사용자를 평가하지 말고 함께 확인하는 말투로 작성",
+    "세부 자기점검 기준:",
+    "- 집중 유지 9문항 중 6개 이상 Yes면 집중 유지 부담 패턴",
+    "- 반응 조절 9문항 중 6개 이상 Yes면 반응 조절 부담 패턴",
+    "- 두 영역이 모두 6개 이상 Yes면 복합 실행 기능 패턴",
+    "- 두 영역 모두 6개 미만 Yes면 큰 부담이 낮은 패턴으로 설명",
+    "- 본 결과는 의학적 진단이 아니라 현재 일상 패턴을 참고하기 위한 것입니다.",
     "기록 JSON:",
     JSON.stringify(record, null, 2),
-    "계산된 증상 기준 체크 해석용 지표:",
+    "계산된 세부 자기점검 해석용 지표:",
     JSON.stringify(analysis, null, 2),
-    "보조 점수:",
+    "보조 지표:",
     JSON.stringify(metrics, null, 2),
     "요청:",
-    "1. summary는 전체 경향을 2문장 이내로 요약",
-    "2. subtype는 현재 분류를 공감적으로 2문장 이내로 설명",
-    "3. inattention는 부주의 영역 해석을 2문장 이내로 설명",
-    "4. hyperactivity는 과잉행동/충동성 영역 해석을 2문장 이내로 설명",
-    "5. guidance는 선별 도구 한계와 다음 단계 권고를 2문장 이내로 설명",
+    "1. summary는 전체 경향을 초등 고학년도 이해할 수 있는 쉬운 말로 2문장 이내 요약",
+    "2. subtype는 현재 분류를 낙인 없이 참고 신호로 2문장 이내 설명",
+    "3. inattention는 집중 유지, 시작 지연, 마무리 어려움 관점에서 2문장 이내 설명",
+    "4. hyperactivity는 기다리기, 멈추기, 빠른 반응 관점에서 2문장 이내 설명",
+    "5. guidance는 세부 설문의 한계와 다음 단계인 반응성 과제 안내를 2문장 이내로 설명",
     "6. 한국어로만 작성"
   ].join("\n");
 }
 
 function buildReactivityAnalysisPrompt(record, analysis, metrics) {
   return [
-    "서비스: ADHDQQ.COM ADHD 선별/감별 보조 모바일 웹 앱",
-    "역할: 반응성 테스트 3종 결과를 짧고 공감적으로 해석하는 한국어 선별 보조 AI",
-    "중요: 진단 확정 표현 금지, 수행 과제 결과와 추가 평가 권고 수준으로만 작성",
-    "반응성 테스트 해석 기준:",
-    "- omissionRate가 높고 reactionVariability 또는 tau가 크면 부주의 신호를 우선 설명",
-    "- commissionRate가 높으면 충동성 또는 반응 억제 어려움을 설명",
-    "- stableDurationPct가 낮거나 spikeCount가 많으면 활동성/자기조절 신호를 보조적으로 설명",
+    "서비스: ADDFCS.COM 주의·집중·실행 기능 패턴 자기점검 모바일 웹 앱",
+    "역할: 반응성 과제 3종 결과를 쉽고 친절하게 해석하는 한국어 자기점검 보조 AI",
+    "중요: 의학적 진단 표현 금지, 수행 과제 결과와 전문가 상담 고려 수준으로만 작성",
+    "사용자 흐름: 이 사용자는 설문을 마친 뒤 반응성 과제 3종을 완료했습니다. 이 결과 다음에는 패턴 리포트로 이동합니다.",
+    "표현 지침: 어려운 용어보다 쉬운 일상어를 쓰고, 사용자를 평가하지 말고 함께 확인하는 말투로 작성",
+    "친절한 설명 지침:",
+    "- '부주의', '충동성', '활동성'이라는 진단명처럼 들릴 수 있는 단어만 던지지 말고 일상 행동으로 풀어 설명",
+    "- omissionRate는 '목표를 놓친 정도', reactionVariability/tau는 '반응 속도가 흔들린 정도', commissionRate는 '멈춰야 할 때 누른 정도'처럼 쉽게 표현",
+    "- 결과가 높거나 낮아도 단정하지 말고 '그럴 수 있어요', '확인해 볼 만해요', '참고 신호예요'처럼 부드럽게 말하기",
+    "- 사용자가 잘못했다는 인상을 주는 표현 금지: 실패, 문제, 결함, 비정상, 심각 같은 단어를 피하기",
+    "- 짧은 과제라 컨디션, 기기 조작, 집중 환경의 영향을 받을 수 있음을 guidance에서 자연스럽게 안내",
+    "반응성 과제 해석 기준:",
+    "- omissionRate가 높고 reactionVariability 또는 tau가 크면 집중 유지 어려움을 우선 설명",
+    "- commissionRate가 높으면 반응 억제 과제의 실수나 멈춤 조절 어려움을 설명",
+    "- stableDurationPct가 낮거나 spikeCount가 많으면 움직임/자기조절 패턴을 보조적으로 설명",
     "- validity.valid가 false인 영역은 데이터 부족으로 해석이 어렵다고 안내",
     "- 수치를 과도하게 나열하지 말고, 이미 계산된 결과를 자연어로 풀어 설명",
     "기록 JSON:",
     JSON.stringify(record, null, 2),
     "로컬 반응성 요약:",
     JSON.stringify(analysis, null, 2),
-    "보조 점수:",
+    "보조 지표:",
     JSON.stringify(metrics, null, 2),
     "요청:",
-    "1. summary는 전체 경향을 2문장 이내로 요약",
-    "2. inattention는 부주의 영역 해석을 2문장 이내로 설명",
-    "3. impulsivity는 충동성 영역 해석을 2문장 이내로 설명",
-    "4. hyperactivity는 활동성/자기조절 영역 해석을 2문장 이내로 설명",
-    "5. guidance는 수행 과제 한계와 다음 단계 권고를 2문장 이내로 설명",
+    "1. summary는 전체 경향을 초등 고학년도 이해할 수 있는 쉬운 말로 2문장 이내 요약",
+    "2. inattention는 목표를 놓치거나 반응 속도가 흔들리는 관점에서 2문장 이내 설명",
+    "3. impulsivity는 멈춰야 할 때 멈추는 조절 관점에서 2문장 이내 설명",
+    "4. hyperactivity는 몸의 움직임, 기다림, 자기조절 관점에서 2문장 이내 설명",
+    "5. guidance는 짧은 수행 과제의 한계와 다음 단계인 종합 리포트 안내를 2문장 이내로 설명",
     "6. 한국어로만 작성"
   ].join("\n");
 }
@@ -866,7 +1051,7 @@ async function generateInsights(record) {
 
   if (geminiApiKey) {
     payload = await callGeminiJson({
-      systemInstruction: "You are a warm, professional, non-diagnostic Korean ADHD screening assistant. Return concise Korean JSON only.",
+      systemInstruction: "You are a warm, professional Korean self-check assistant for attention, focus, and executive-function patterns. Avoid medical labeling language. Return concise Korean JSON only.",
       prompt: buildInsightsPrompt(record, metrics),
       schemaHint: [
         "Schema:",
@@ -962,7 +1147,7 @@ async function generateInsights(record) {
 async function generateChatReply(record, message) {
   const metrics = computeAssessmentMetrics(record);
   const payload = await callGeminiJson({
-    systemInstruction: "You are a concise Korean AI coach for an ADHD screening support app. Return JSON only.",
+    systemInstruction: "You are a concise Korean AI coach for an attention and executive-function self-check app. Avoid medical labeling language. Return JSON only.",
     prompt: buildChatPrompt(record, message, metrics),
     schemaHint: [
       "Schema:",
@@ -982,7 +1167,7 @@ async function generateChatReply(record, message) {
 async function generateAsrsAnalysis(record, analysis) {
   const metrics = computeAssessmentMetrics(record);
   const payload = await callGeminiJson({
-    systemInstruction: "You are a concise Korean assistant for interpreting self-report screening results. Return JSON only.",
+    systemInstruction: "You are a concise Korean assistant for interpreting self-check responses without medical labeling language. Return JSON only.",
     prompt: buildAsrsAnalysisPrompt(record, analysis, metrics),
     schemaHint: [
       "Schema:",
@@ -997,16 +1182,16 @@ async function generateAsrsAnalysis(record, analysis) {
 
   return {
     summary: payload.summary || "자가보고 응답에서 현재 주의집중 관련 어려움의 강도를 함께 살펴볼 필요가 있습니다.",
-    attention: payload.attention || "주의력 결핍 관련 응답 강도를 기준으로 일상 집중 유지와 시작 지연 패턴을 확인할 수 있습니다.",
-    hyperactivity: payload.hyperactivity || "과잉행동·충동성 관련 응답 강도를 기준으로 몸의 안절부절함이나 끼어들기 양상을 참고할 수 있습니다.",
-    guidance: payload.guidance || "이 검사는 선별 도구이므로 어려움이 지속되면 추가 평가와 상담을 고려하는 것이 좋습니다."
+    attention: payload.attention || "집중 유지 관련 응답 지표를 기준으로 일상 집중 유지와 시작 지연 패턴을 확인할 수 있습니다.",
+    hyperactivity: payload.hyperactivity || "반응 조절 관련 응답 지표를 기준으로 몸의 안절부절함이나 끼어들기 양상을 참고할 수 있습니다.",
+    guidance: payload.guidance || "이 내용은 의학적 진단이 아니라 자기점검 참고 자료이므로, 어려움이 지속되면 전문가 상담을 함께 고려하는 것이 좋습니다."
   };
 }
 
 async function generateDsmAnalysis(record, analysis) {
   const metrics = computeAssessmentMetrics(record);
   const payload = await callGeminiJson({
-    systemInstruction: "You are a concise Korean assistant for interpreting symptom checklist results. Return JSON only.",
+    systemInstruction: "You are a concise Korean assistant for interpreting executive-function self-check responses without medical labeling language. Return JSON only.",
     prompt: buildDsmAnalysisPrompt(record, analysis, metrics),
     schemaHint: [
       "Schema:",
@@ -1021,18 +1206,18 @@ async function generateDsmAnalysis(record, analysis) {
   });
 
   return {
-    summary: payload.summary || "증상 기준 체크 응답에서는 현재 부주의와 과잉행동·충동성 신호 분포를 함께 살펴볼 필요가 있습니다.",
-    subtype: payload.subtype || `현재 응답은 ${analysis.subtype || "판정 보류"}로 정리됩니다.`,
-    inattention: payload.inattention || `부주의 문항은 ${analysis.inattentionYes || 0} / 9개 Yes로 집계되었습니다.`,
-    hyperactivity: payload.hyperactivity || `과잉행동·충동성 문항은 ${analysis.hyperactivityYes || 0} / 9개 Yes로 집계되었습니다.`,
-    guidance: payload.guidance || "본 결과는 진단이 아니라 참고용 선별 결과이므로 어려움이 지속되면 추가 평가를 고려하는 것이 좋습니다."
+    summary: payload.summary || "세부 자기점검 응답에서는 현재 집중 유지와 반응 조절 부담의 분포를 함께 살펴볼 필요가 있습니다.",
+    subtype: payload.subtype || `현재 응답은 ${analysis.subtype || "패턴 확인 중"}으로 정리됩니다.`,
+    inattention: payload.inattention || `집중 유지 문항은 ${analysis.inattentionYes || 0} / 9개 Yes로 집계되었습니다.`,
+    hyperactivity: payload.hyperactivity || `반응 조절 문항은 ${analysis.hyperactivityYes || 0} / 9개 Yes로 집계되었습니다.`,
+    guidance: payload.guidance || "이 내용은 의학적 진단이 아니라 자기점검 참고 자료이므로 어려움이 지속되면 전문가 상담을 함께 고려하는 것이 좋습니다."
   };
 }
 
 async function generateReactivityAnalysis(record, analysis) {
   const metrics = computeAssessmentMetrics(record);
   const payload = await callGeminiJson({
-    systemInstruction: "You are a concise Korean assistant for interpreting short reactivity test results. Return JSON only.",
+    systemInstruction: "You are a warm, concise Korean assistant for explaining short reactivity test results in plain language. Return JSON only.",
     prompt: buildReactivityAnalysisPrompt(record, analysis, metrics),
     schemaHint: [
       "Schema:",
@@ -1047,11 +1232,11 @@ async function generateReactivityAnalysis(record, analysis) {
   });
 
   return {
-    summary: payload.summary || analysis.summary || "반응성 테스트에서는 일부 수행 지표를 함께 참고할 필요가 있습니다.",
-    inattention: payload.inattention || analysis.inattention || "신호 찾기 결과를 바탕으로 부주의 관련 수행 패턴을 보조적으로 참고할 수 있습니다.",
-    impulsivity: payload.impulsivity || analysis.impulsivity || "멈춤 버튼 결과를 바탕으로 충동성 관련 수행 패턴을 보조적으로 참고할 수 있습니다.",
-    hyperactivity: payload.hyperactivity || analysis.hyperactivity || "균형 유지 결과를 바탕으로 활동성 관련 수행 패턴을 보조적으로 참고할 수 있습니다.",
-    guidance: payload.guidance || analysis.guidance || "반응성 테스트는 짧은 수행 과제 기반의 보조 지표이므로 다른 선별 결과와 함께 해석하는 것이 적절합니다."
+    summary: payload.summary || analysis.summary || "반응성 과제에서는 일부 수행 지표를 함께 참고할 필요가 있습니다.",
+    inattention: payload.inattention || analysis.inattention || "신호 찾기 결과를 바탕으로 집중 유지 관련 수행 패턴을 보조적으로 참고할 수 있습니다.",
+    impulsivity: payload.impulsivity || analysis.impulsivity || "멈춤 버튼 결과를 바탕으로 반응 조절 관련 수행 패턴을 보조적으로 참고할 수 있습니다.",
+    hyperactivity: payload.hyperactivity || analysis.hyperactivity || "균형 유지 결과를 바탕으로 움직임 조절 관련 수행 패턴을 보조적으로 참고할 수 있습니다.",
+    guidance: payload.guidance || analysis.guidance || "반응성 과제는 짧은 수행 기반의 보조 자료이므로 자기점검 응답과 생활 맥락을 함께 해석하는 것이 적절합니다."
   };
 }
 
@@ -1081,6 +1266,32 @@ const server = http.createServer(async (req, res) => {
         .filter((record) => record && typeof record.createdAt === "string")
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       sendJson(res, 200, records);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/design-themes") {
+      const themes = listDesignThemes().map((theme) => ({
+        slug: theme.slug,
+        fileName: theme.fileName,
+        name: theme.name,
+        version: theme.version,
+        description: theme.description
+      }));
+      sendJson(res, 200, {
+        themes,
+        defaultThemeSlug: themes.some((theme) => theme.slug === "kraken") ? "kraken" : themes[0]?.slug || ""
+      });
+      return;
+    }
+
+    if (req.method === "GET" && pathname.startsWith("/api/design-themes/")) {
+      const slug = pathname.replace("/api/design-themes/", "").trim().toLowerCase();
+      const theme = listDesignThemes().find((item) => item.slug === slug);
+      if (!theme) {
+        sendJson(res, 404, { error: "Design theme not found" });
+        return;
+      }
+      sendJson(res, 200, theme);
       return;
     }
 
@@ -1241,5 +1452,5 @@ const server = http.createServer(async (req, res) => {
 const port = process.env.PORT || 3333;
 const host = process.env.HOST || "127.0.0.1";
 server.listen(port, host, () => {
-  console.log(`ADHDQQ.COM app listening on http://${host}:${port}`);
+  console.log(`ADDFCS.COM app listening on http://${host}:${port}`);
 });

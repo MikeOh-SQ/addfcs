@@ -3,7 +3,7 @@
   "title": "플랜 튜토리얼 - 오늘의 목표 관리",
   "game_type": "plan_daily_goals",
   "plan_rules": {
-    "goal_source": "이전에 진행한 ADHD 검사 결과에서 제안된 3가지 목표를 불러온다",
+    "goal_source": "이전에 진행한 주의·집중 자기점검 기록에서 제안된 3가지 목표를 불러온다",
     "goal_count": 3,
     "score_per_completed_goal": 10,
     "goal_edit": "각 목표의 수정 버튼을 눌러 언제든지 변경할 수 있다",
@@ -33,13 +33,13 @@
       "speaker": "lumen",
       "expression": "lumen_serious",
       "expression_kr": "정색함 / 진심 모드",
-      "text": "여기에는 예전에 자네가 했던 ADHD 검사 결과를 바탕으로 제안된 목표 3개가 들어온다."
+      "text": "여기에는 예전에 자네가 했던 주의·집중 자기점검 기록를 바탕으로 제안된 목표 3개가 들어온다."
     },
     {
       "speaker": "add",
       "expression": "add_confused",
       "expression_kr": "당황함 / 어리둥절",
-      "text": "처음부터 내가 직접 적는 게 아니라, 검사에서 가져오는 거네?"
+      "text": "처음부터 내가 직접 적는 게 아니라, 자기점검에서 가져오는 거네?"
     },
     {
       "speaker": "lumen",

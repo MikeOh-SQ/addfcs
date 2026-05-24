@@ -9,8 +9,8 @@
   "sections": [
     {
       "key": "summary",
-      "title": "종합 해석",
-      "description": "ASRS와 DSM-5 응답을 바탕으로 현재 패턴을 요약합니다."
+      "title": "패턴 요약",
+      "description": "자가점검 응답을 바탕으로 현재 주의·집중 패턴을 요약합니다."
     },
     {
       "key": "strength",

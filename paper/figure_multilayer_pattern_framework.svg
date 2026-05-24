@@ -1,0 +1,90 @@
+<svg width="1600" height="940" viewBox="0 0 1600 940" role="img" aria-labelledby="title desc">
+  <title id="title">디지털 ADHD 선별을 위한 다층적 패턴 해석 프레임워크 / Multi-Layered Pattern Interpretation Framework for Digital ADHD Screening</title>
+  <desc id="desc">A left-to-right academic diagram showing four input information sources converging into multi-layered pattern interpretation and leading to screening and self-understanding support.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#444444"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font-family: "Noto Sans CJK KR", "Noto Sans KR", Arial, Helvetica, sans-serif; font-size: 30px; font-weight: 700; fill: #111111; }
+      .subtitle { font-family: "Noto Sans CJK KR", "Noto Sans KR", Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 500; fill: #555555; }
+      .section-title { font-family: "Noto Sans CJK KR", "Noto Sans KR", Arial, Helvetica, sans-serif; font-size: 22px; font-weight: 700; fill: #111111; }
+      .box-title { font-family: "Noto Sans CJK KR", "Noto Sans KR", Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 700; fill: #111111; }
+      .item { font-family: "Noto Sans CJK KR", "Noto Sans KR", Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 400; fill: #333333; }
+      .note { font-family: "Noto Sans CJK KR", "Noto Sans KR", Arial, Helvetica, sans-serif; font-size: 16px; font-weight: 500; fill: #222222; }
+      .box { fill: #fafafa; stroke: #333333; stroke-width: 1.4; rx: 8; }
+      .left-box { fill: #fbfbfb; stroke: #555555; stroke-width: 1.2; rx: 8; }
+      .center-box { fill: #f4f7f8; stroke: #1f4e5f; stroke-width: 2.2; rx: 10; }
+      .right-box { fill: #f8f8f8; stroke: #333333; stroke-width: 1.8; rx: 10; }
+      .note-box { fill: #ffffff; stroke: #777777; stroke-width: 1.2; rx: 6; }
+      .arrow { fill: none; stroke: #444444; stroke-width: 2; marker-end: url(#arrow); }
+      .thin-line { stroke: #d0d0d0; stroke-width: 1; }
+      .accent { fill: #1f4e5f; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="940"/>
+
+  <text class="title" x="800" y="52" text-anchor="middle">디지털 ADHD 선별을 위한 다층적 패턴 해석 프레임워크</text>
+  <text class="subtitle" x="800" y="82" text-anchor="middle">Multi-Layered Pattern Interpretation Framework for Digital ADHD Screening</text>
+
+  <line class="thin-line" x1="80" y1="112" x2="1520" y2="112"/>
+
+  <text class="section-title" x="330" y="155" text-anchor="middle">입력 정보원 / Input Information Sources</text>
+
+  <rect class="left-box" x="90" y="180" width="480" height="118"/>
+  <text class="box-title" x="120" y="211">자기보고 설문 / Self-Report Questionnaire</text>
+  <text class="item" x="128" y="242">• 일상 어려움 / Everyday Difficulties</text>
+  <text class="item" x="128" y="266">• 주관적 고통 / Subjective Distress</text>
+  <text class="item" x="128" y="290">• 과대·과소보고 가능성 / Possible Over- or Under-Reporting</text>
+
+  <rect class="left-box" x="90" y="322" width="480" height="118"/>
+  <text class="box-title" x="120" y="353">DSM-5 기반 증상 구조화 / DSM-5-Based Symptom Structuring</text>
+  <text class="item" x="128" y="384">• 부주의 / Inattention</text>
+  <text class="item" x="128" y="408">• 과잉행동·충동성 / Hyperactivity-Impulsivity</text>
+  <text class="item" x="128" y="432">• 지속성·맥락 정보 / Persistence and Context Information</text>
+
+  <rect class="left-box" x="90" y="464" width="480" height="118"/>
+  <text class="box-title" x="120" y="495">Go/No-Go 반응 억제 과제 / Go/No-Go Response Inhibition Task</text>
+  <text class="item" x="128" y="526">• No-Go 오반응 / No-Go False Alarms</text>
+  <text class="item" x="128" y="550">• Go 누락 / Go Omissions</text>
+  <text class="item" x="128" y="574">• 억제 조절 단서 / Response Inhibition Cues</text>
+
+  <rect class="left-box" x="90" y="606" width="480" height="118"/>
+  <text class="box-title" x="120" y="637">CPT 계열 지속주의 과제 / CPT-Type Sustained Attention Task</text>
+  <text class="item" x="128" y="668">• 누락 오류 / Omission Errors</text>
+  <text class="item" x="128" y="692">• 오경보 / Commission Errors</text>
+  <text class="item" x="128" y="716">• 반응시간 변동성 / Reaction Time Variability</text>
+
+  <rect class="center-box" x="700" y="310" width="350" height="250"/>
+  <rect class="accent" x="700" y="310" width="350" height="8" rx="4"/>
+  <text class="section-title" x="875" y="354" text-anchor="middle">다층적 패턴 해석</text>
+  <text class="subtitle" x="875" y="382" text-anchor="middle">Multi-Layered Pattern Interpretation</text>
+  <text class="item" x="735" y="424">• 신호의 수렴 / Convergence of Signals</text>
+  <text class="item" x="735" y="456">• 신호의 분산 / Divergence of Signals</text>
+  <text class="item" x="735" y="488">• 일치와 불일치 / Agreement and Disagreement</text>
+  <text class="item" x="735" y="520">• 맥락 기반 해석 / Context-Based Interpretation</text>
+
+  <rect class="right-box" x="1180" y="322" width="330" height="226"/>
+  <text class="section-title" x="1345" y="363" text-anchor="middle">선별 및 자기이해 보조</text>
+  <text class="subtitle" x="1345" y="391" text-anchor="middle">Screening and Self-Understanding Support</text>
+  <text class="item" x="1215" y="431">• 진단 아님 / Not a Diagnosis</text>
+  <text class="item" x="1215" y="463">• 자동 판정 아님 / Not an Automated Decision</text>
+  <text class="item" x="1215" y="495">• 추가 평가 권고 / Recommendation for Further Evaluation</text>
+  <text class="item" x="1215" y="527">• 생활 맥락 이해 / Understanding Everyday Context</text>
+
+  <path class="arrow" d="M570 239 C625 239, 650 360, 700 385"/>
+  <path class="arrow" d="M570 381 C625 381, 650 408, 700 420"/>
+  <path class="arrow" d="M570 523 C625 523, 650 462, 700 452"/>
+  <path class="arrow" d="M570 665 C625 665, 650 530, 700 500"/>
+  <path class="arrow" d="M1050 435 L1180 435"/>
+
+  <text class="subtitle" x="636" y="350" text-anchor="middle">통합 / Integration</text>
+  <text class="subtitle" x="1116" y="416" text-anchor="middle">해석 결과 /</text>
+  <text class="subtitle" x="1116" y="442" text-anchor="middle">Interpretive Output</text>
+
+  <rect class="note-box" x="110" y="800" width="1380" height="88"/>
+  <text class="note" x="800" y="834" text-anchor="middle">본 프레임워크는 임상 진단을 대체하지 않으며, 인간 대상 데이터나 진단 정확도 검증을 포함하지 않는다.</text>
+  <text class="note" x="800" y="864" text-anchor="middle">This framework does not replace clinical diagnosis and does not include human-subject data or diagnostic accuracy validation.</text>
+</svg>
