@@ -2,4 +2,5 @@
 .server.pid
 server.log
 database/*.json
+!database/map-layout.json
 database/old/

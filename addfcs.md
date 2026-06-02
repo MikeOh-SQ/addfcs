@@ -19,6 +19,7 @@ ADDFCS.COM은 주의, 집중, 실행 기능과 관련된 일상 패턴을 사용
 - 반응성 과제는 보조 자료로 사용하며, 과제 하나로 ADHD 여부를 판단하지 않는다.
 - 결과는 부주의, 충동성, 활동성, 일상 피로도, 실행 계획의 형태로 쉽게 설명한다.
 - 사용자의 기록은 `database/*.json`에 저장되고, GitHub 백업에서는 현재 제외 규칙에 따라 제외된다.
+- `database/map-layout.json`은 `/map` 화면의 노드 배치값을 담는 시스템 파일이므로 GitHub에 포함한다.
 
 ## 3. 전체 사용자 흐름
 
@@ -198,7 +199,7 @@ AI 입력에는 RAG 검색 결과가 아니라 현재 record, local analysis, me
 
 ## 12. 데이터 저장 구조
 
-사용자 기록은 `database/<id>-<timestamp>.json` 형태로 저장된다. 주요 필드는 다음과 같다.
+사용자 기록은 `database/<id>-<timestamp>.json` 형태로 저장된다. `database/map-layout.json`은 사용자 기록이 아니라 서비스 지도 노드 위치를 저장하는 시스템 파일이다. 주요 사용자 기록 필드는 다음과 같다.
 
 - `id`: 사용자 ID
 - `createdAt`, `updatedAt`: 생성 및 수정 시각
@@ -299,4 +300,4 @@ npm start
 
 ## 20. 현재 GitHub 백업 기준
 
-현재 저장소는 `MikeOh-SQ/addfcs`에 연결되어 있다. `.gitignore` 기준으로 `.env`, `server.log`, `.server.pid`, `database/*.json`, `database/old/`는 GitHub에 올리지 않는다. 따라서 저장소에는 서비스 코드, 정적 자산, 설정 파일, 디자인 테마, README, 상세 문서가 반영되고, 실제 사용자 기록과 API 키는 제외된다.
+현재 저장소는 `MikeOh-SQ/addfcs`에 연결되어 있다. `.gitignore` 기준으로 `.env`, `server.log`, `.server.pid`, 사용자 기록용 `database/*.json`, `database/old/`는 GitHub에 올리지 않는다. 단, `/map` 화면의 시스템 배치값인 `database/map-layout.json`은 예외로 포함한다. 따라서 저장소에는 서비스 코드, 정적 자산, 설정 파일, 디자인 테마, README, 상세 문서, 지도 배치값이 반영되고, 실제 사용자 기록과 API 키는 제외된다.

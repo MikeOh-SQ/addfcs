@@ -35,7 +35,8 @@ ADDFCS.COM은 주의·집중·실행 기능과 관련된 일상 패턴을 이해
 - 진행 중 기록 JSON 확인 모달과 admin 기록 불러오기 모달
 - `DTx` 숲 허브, `plangame` 목표 체크, 미니게임 점수 누적 실험 기능
 - `/map` 구조도 화면으로 JSON, 파생 스키마, AI 입력 흐름 시각화
-- `database/*.json` 파일 기반 로컬 저장
+- 사용자 기록은 `database/*.json` 파일 기반으로 로컬 저장
+- 서비스 지도 배치값은 `database/map-layout.json`에 저장
 
 ## 하이브리드 작동 방식
 
@@ -160,6 +161,7 @@ npm start
 ## 저장 데이터
 
 - 사용자 기록은 `database/<id>-<timestamp>.json` 형태로 저장됩니다.
+- 서비스 지도(`/map`)의 노드 배치값은 `database/map-layout.json`에 저장되며, 사용자 기록 파일과 달리 시스템 파일로 GitHub에 포함됩니다.
 - 기록에는 현재 단계, 자가보고 응답, 세부 자기점검 응답, 반응성 과제 리포트, 리포트, 계획이 함께 저장됩니다.
 - 신규 기록에는 `researchUsage.sessions`가 함께 저장되며, 세션별 접속 시각, 마지막 활동 시각, 체류 시간(ms), 주요 수행 이벤트를 연구 분석용으로 누적합니다.
 - `DTx`/`plangame`을 사용하면 `record.dtx`, `record.tutorials`, `record.planGame` 같은 보조 상태도 함께 저장됩니다.
