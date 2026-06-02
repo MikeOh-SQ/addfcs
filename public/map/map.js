@@ -214,7 +214,7 @@ const nodes = [
     ],
     links: [
       "buildDeterministicReport(), buildPlanForMetrics(), 모든 AI 프롬프트의 공통 입력입니다.",
-      "jsonlist.md의 파생 변수 사전과 가장 직접적으로 대응합니다.",
+      "핵심 JSON과 파생 변수 흐름을 가장 직접적으로 보여줍니다.",
       "개념적으로는 SELF/SYM/REACT 원본 입력을 한 번 더 압축한 통합 해석 계층입니다."
     ]
   },
@@ -415,7 +415,7 @@ const nodes = [
 8. plan.openingMessage는 계획 수정을 유도하는 1~2문장`,
     links: [
       "RESULT 화면과 PLAN 초기 메시지의 시작점입니다.",
-      "rag.md의 핵심 결론인 로컬 데이터 주입형 프롬프트 구조를 가장 잘 보여주는 노드입니다.",
+      "로컬 데이터 주입형 프롬프트 구조를 가장 잘 보여주는 노드입니다.",
       "구조도에서는 저장 레코드가 아니라 실제 의미 입력 흐름 기준으로 이해하는 것이 맞습니다."
     ]
   },
@@ -458,7 +458,7 @@ reply는 사용자의 요청을 반영한 짧고 구체적인 답변 2~4문장
 additionalSuggestion은 꼭 필요할 때만 한 문장으로 제안`,
     links: [
       "결과는 record.plan.chat과 record.plan.suggestions에 반영됩니다.",
-      "sumlogic.md에서 PLAN 실시간 요약형 응답으로 정리된 구간입니다."
+      "PLAN 실시간 요약형 응답 구간입니다."
     ]
   },
   {
@@ -481,7 +481,7 @@ additionalSuggestion은 꼭 필요할 때만 한 문장으로 제안`,
       ["domain split", "attentionPositive / 4, hyperPositive / 2"]
     ],
     links: [
-      "sumlogic.md의 SELF 표시 우선순위 구간과 대응합니다."
+      "SELF 표시 우선순위 구간과 대응합니다."
     ]
   },
   {
@@ -553,8 +553,8 @@ additionalSuggestion은 꼭 필요할 때만 한 문장으로 제안`,
       ["dailyImpact", "부담도 라벨과 공감 문장"]
     ],
     links: [
-      "rag.md의 'AI가 전부 판단하지 않는다'는 결론과 바로 연결됩니다.",
-      "sumlogic.md 기준으로는 deterministic report가 본체이고, local-self/local-sym/reactivity-summary는 fallback 계층입니다."
+      "AI가 전부 판단하지 않고 저장 데이터와 서버 계산값을 우선하는 구조입니다.",
+      "deterministic report가 본체이고, local-self/local-sym/reactivity-summary는 fallback 계층입니다."
     ]
   },
   {

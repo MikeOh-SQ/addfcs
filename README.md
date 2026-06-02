@@ -116,16 +116,7 @@ ADDFCS.COM은 주의·집중·실행 기능과 관련된 일상 패턴을 이해
 │   └── styles.css
 ├── server.js
 ├── run.sh
-├── end.sh
-├── jsonlist.md
-├── rag.md
-├── sumlogic.md
-├── 질문과해석.md
-├── 전체프로세스.md
-├── 반응성게임사양서.md
-├── 논문차용.md
-├── 구조설명.md
-└── 발표자료.md
+└── end.sh
 ```
 
 ## 환경 변수
@@ -185,18 +176,6 @@ npm start
 - 개별 템플릿 API: `/api/design-themes/:slug`
 - 현재 앱은 이 템플릿을 CSS 변수 기반 테마로 변환해 적용합니다.
 - 새 템플릿을 추가할 때는 front matter에 `colors`, `typography`, `rounded`, `spacing`, `components` 구조를 유지하면 됩니다.
-
-## 관련 문서
-
-- [전체프로세스.md](전체프로세스.md): 입력, 저장, 계산, AI 연결 흐름
-- [질문과해석.md](질문과해석.md): 저장 JSON 값과 해석 규칙
-- [jsonlist.md](jsonlist.md): 핵심 JSON과 파생 변수 영향 정리
-- [rag.md](rag.md): AI 개입 지점과 프롬프트 입력 자료 정리
-- [sumlogic.md](sumlogic.md): 화면별 요약 문장 생성 우선순위 정리
-- [반응성게임사양서.md](반응성게임사양서.md): 반응성 과제 상세 사양
-- [구조설명.md](구조설명.md): 비전공자용 구조 설명
-- [논문차용.md](논문차용.md): 논문/자료에서 차용한 개념
-- [발표자료.md](발표자료.md): 프로젝트 발표용 슬라이드 원고
 
 ## 주의
 
