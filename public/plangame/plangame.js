@@ -5,6 +5,7 @@ const {
   hasSeenTutorial,
   markTutorialSeen,
   persistRecord,
+  trackActivity,
   buildUrl,
   escapeHtml,
   computeStageByScore,
@@ -271,6 +272,7 @@ async function completeGoal(index) {
   goal.completedAt = now.toISOString();
   goal.cooldownUntil = new Date(now.getTime() + COOLDOWN_MS).toISOString();
   ensureDtx(state.record).scores.plangame += 10;
+  trackActivity(state.record, "plan_goal_completed", { goalIndex: index + 1 });
   await saveState();
   render();
 }
@@ -293,6 +295,7 @@ async function editGoal(index) {
   current.cooldownUntil = null;
   current.updatedAt = new Date().toISOString();
   state.openGoalIndex = index;
+  trackActivity(state.record, "plan_goal_edited", { goalIndex: index + 1 });
   await saveState();
   render();
 }
@@ -396,6 +399,8 @@ async function init() {
   ensurePlanGame(record);
   state.record = record;
   state.goals = record.planGame.goals;
+  trackActivity(state.record, "page_view", { page: "plangame" });
+  await persistRecord(state.record);
   render();
   if (SHOULD_AUTO_TUTORIAL && !hasSeenTutorial(record, "plan")) {
     await startTutorial();

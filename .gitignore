@@ -2,3 +2,4 @@
 .server.pid
 server.log
 database/*.json
+database/old/

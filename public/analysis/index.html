@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ADDFCS.COM Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Material+Symbols+Outlined:wght@300..600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/analysis/analysis.css?v=9" />
+  </head>
+  <body>
+    <header class="analysis-header">
+      <div>
+        <p class="eyebrow">ADDFCS.COM</p>
+        <h1>데이터 통계 분석</h1>
+      </div>
+      <div class="header-meta">
+        <span class="material-symbols-outlined" aria-hidden="true">database</span>
+        <span id="generated-at">불러오는 중</span>
+      </div>
+    </header>
+
+    <main class="analysis-shell">
+      <section class="summary-grid" aria-label="핵심 지표">
+        <article class="metric-card">
+          <span class="metric-label">전체 이용자 수</span>
+          <strong id="total-users">-</strong>
+          <p id="total-records">old 제외 기록 -건</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">재방문 비율</span>
+          <strong id="returning-rate">-</strong>
+          <p id="returning-users">재방문 이용자 -명</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">반응성 완료 분석 대상</span>
+          <strong id="completed-users">-</strong>
+          <p>team3, yonsei 제외</p>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">progress</p>
+            <h2>진행 단계 분포</h2>
+          </div>
+          <p class="section-note">전체 이용자 기준, 최신 기록 1개로 집계</p>
+        </div>
+        <div id="stage-bars" class="bar-list"></div>
+        <div class="subsection-heading">
+          <h3>반응성 진행 중 세부 단계</h3>
+          <p>반응성 진행 중으로 분류된 사용자 기준</p>
+        </div>
+        <div id="reactivity-progress-bars" class="bar-list compact"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">survey selection</p>
+            <h2>설문 선택 및 완료 여부</h2>
+          </div>
+        </div>
+        <div id="survey-bars" class="bar-list compact"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">pattern interpretation</p>
+            <h2>MULTI-LAYERED PATTERN INTERPRETATION</h2>
+          </div>
+          <p class="section-note">설문조사는 100점 만점 부담 점수로, 수행과제는 완료자 집단 내 상대 부담 점수로 환산했습니다. 두 축 모두 점수가 높을수록 부담 신호가 큰 것으로 해석합니다.</p>
+        </div>
+        <div class="chart-card wide-scatter-card">
+          <h3>설문조사 부담 점수 x 수행과제 부담 점수</h3>
+          <svg id="pattern-scatter" class="scatter-chart" viewBox="0 0 520 320" role="img" aria-label="설문조사 부담 점수와 수행과제 부담 점수 산점도"></svg>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">cross analysis</p>
+            <h2>자가보고와 반응성 테스트 교차분석</h2>
+          </div>
+          <p id="cross-summary" class="section-note"></p>
+        </div>
+        <div class="method-box">
+          <h3>분석 방식 및 해석</h3>
+          <ol id="analysis-method"></ol>
+        </div>
+        <div id="correlation-matrix" class="correlation-matrix"></div>
+        <div class="cross-grid">
+          <div class="chart-card">
+            <h3>일치 여부</h3>
+            <div id="alignment-chart" class="donut-wrap"></div>
+          </div>
+          <div class="chart-card">
+            <h3>주관 x 객관 영역</h3>
+            <div id="cross-table" class="cross-table"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">graphs</p>
+            <h2>관련 그래프</h2>
+          </div>
+          <p class="section-note">반응성 축은 높을수록 안정적인 수행, 즉 관련 부담 신호가 낮다는 뜻입니다.</p>
+        </div>
+        <div class="chart-card domain-scatter-card">
+          <h3>2x2 도메인 산점도</h3>
+          <div id="domain-scatter-grid" class="domain-scatter-grid expanded"></div>
+        </div>
+      </section>
+
+      <p id="filter-note" class="filter-note"></p>
+    </main>
+
+    <script src="/analysis/analysis.js?v=9"></script>
+  </body>
+</html>

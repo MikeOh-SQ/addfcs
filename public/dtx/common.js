@@ -1,4 +1,9 @@
 window.DtxCommon = (() => {
+  const RESEARCH_SESSION_ID = typeof window.crypto?.randomUUID === "function"
+    ? window.crypto.randomUUID()
+    : `dtx-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const RESEARCH_SESSION_STARTED_AT = new Date().toISOString();
+  const RESEARCH_APP = window.location.pathname.replaceAll("/", "") || "dtx";
   const STAGE_THRESHOLDS = [
     { minScore: 800, stage: "stage5", image: "/game/images/stage5.png" },
     { minScore: 600, stage: "stage4", image: "/game/images/stage4.png" },
@@ -7,6 +12,7 @@ window.DtxCommon = (() => {
     { minScore: 0, stage: "stage1", image: "/game/images/stage1.png" }
   ];
   const sanitizedImageCache = new Map();
+  let activeResearchRecord = null;
 
   async function api(url, options) {
     const response = await fetch(url, {
@@ -97,6 +103,72 @@ window.DtxCommon = (() => {
     return record.tutorials;
   }
 
+  function ensureResearchUsage(record) {
+    if (!record || typeof record !== "object") {
+      return null;
+    }
+    if (!record.researchUsage || typeof record.researchUsage !== "object") {
+      record.researchUsage = { version: 1, sessions: [] };
+    }
+    if (!Array.isArray(record.researchUsage.sessions)) {
+      record.researchUsage.sessions = [];
+    }
+    let session = record.researchUsage.sessions.find((item) => item.sessionId === RESEARCH_SESSION_ID);
+    if (!session) {
+      session = {
+        sessionId: RESEARCH_SESSION_ID,
+        app: RESEARCH_APP,
+        connectedAt: RESEARCH_SESSION_STARTED_AT,
+        lastActivityAt: RESEARCH_SESSION_STARTED_AT,
+        durationMs: 0,
+        activities: []
+      };
+      record.researchUsage.sessions.push(session);
+    }
+    if (!Array.isArray(session.activities)) {
+      session.activities = [];
+    }
+    activeResearchRecord = record;
+    return session;
+  }
+
+  function updateResearchSessionDuration(record) {
+    const session = ensureResearchUsage(record);
+    if (!session) {
+      return null;
+    }
+    const now = new Date();
+    session.lastActivityAt = now.toISOString();
+    session.durationMs = Math.max(0, now.getTime() - new Date(session.connectedAt).getTime());
+    return session;
+  }
+
+  function trackActivity(record, action, details = {}) {
+    const session = updateResearchSessionDuration(record);
+    if (!session) {
+      return;
+    }
+    session.activities.push({
+      at: session.lastActivityAt,
+      action,
+      page: window.location.pathname,
+      ...details
+    });
+  }
+
+  function flushResearchUsage() {
+    if (!activeResearchRecord?.fileName) {
+      return;
+    }
+    updateResearchSessionDuration(activeResearchRecord);
+    const body = JSON.stringify({
+      fileName: activeResearchRecord.fileName,
+      data: activeResearchRecord,
+      writer: "dtx"
+    });
+    navigator.sendBeacon("/api/records", new Blob([body], { type: "application/json" }));
+  }
+
   function hasSeenTutorial(record, key) {
     const tutorials = ensureTutorialState(record);
     return Boolean(tutorials[key]);
@@ -108,10 +180,12 @@ window.DtxCommon = (() => {
       return;
     }
     tutorials[key] = true;
+    trackActivity(record, "tutorial_completed", { tutorial: key });
     await persistRecord(record);
   }
 
   async function persistRecord(record) {
+    updateResearchSessionDuration(record);
     record.updatedAt = new Date().toISOString();
     ensureDtx(record);
     ensureTutorialState(record);
@@ -123,7 +197,8 @@ window.DtxCommon = (() => {
       method: "POST",
       body: JSON.stringify({
         fileName: record.fileName,
-        data: record
+        data: record,
+        writer: "dtx"
       })
     });
   }
@@ -493,6 +568,12 @@ window.DtxCommon = (() => {
   } else {
     initScaleFitRoots();
   }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      flushResearchUsage();
+    }
+  });
+  window.addEventListener("pagehide", flushResearchUsage);
 
   return {
     STAGE_THRESHOLDS,
@@ -503,6 +584,9 @@ window.DtxCommon = (() => {
     computeStageByScore,
     ensureDtx,
     ensureTutorialState,
+    ensureResearchUsage,
+    trackActivity,
+    flushResearchUsage,
     hasSeenTutorial,
     markTutorialSeen,
     persistRecord,

@@ -162,6 +162,7 @@ npm start
 
 - 사용자 기록은 `database/<id>-<timestamp>.json` 형태로 저장됩니다.
 - 기록에는 현재 단계, 자가보고 응답, 세부 자기점검 응답, 반응성 과제 리포트, 리포트, 계획이 함께 저장됩니다.
+- 신규 기록에는 `researchUsage.sessions`가 함께 저장되며, 세션별 접속 시각, 마지막 활동 시각, 체류 시간(ms), 주요 수행 이벤트를 연구 분석용으로 누적합니다.
 - `DTx`/`plangame`을 사용하면 `record.dtx`, `record.tutorials`, `record.planGame` 같은 보조 상태도 함께 저장됩니다.
 - 최신 리포트는 `report.schemaVersion = 2` 기준으로 관리합니다.
 - 오래된 레코드를 `report` 또는 `plan` 단계에서 불러오면 새 스키마 리포트로 다시 생성합니다.

@@ -797,6 +797,8 @@ subtype 판정 기준:
   - 숲 stage와 누적 점수 상태
 - `tutorials`
   - plan/build/chop 튜토리얼 시청 여부
+- `researchUsage.sessions`
+  - 접속 세션별 `connectedAt`, `lastActivityAt`, `durationMs`, `activities` 연구 분석 로그
 
 ### 각 필드 의미
 
@@ -863,6 +865,9 @@ subtype 판정 기준:
 
 - `tutorials.plan`, `tutorials.build`, `tutorials.chop`
   - 각 튜토리얼 재생 여부
+
+- `researchUsage.sessions[*].activities`
+  - 화면 방문, 설문 완료, 반응 과제 수행, 리포트 생성, 플랜/DTx 활동 등 주요 행동의 시각별 로그
 
 ### 의미
 

@@ -10,6 +10,7 @@ const {
   hasSeenTutorial,
   markTutorialSeen,
   persistRecord,
+  trackActivity,
   buildUrl,
   resolveCharacterImage,
   showSpeakerImage
@@ -235,6 +236,7 @@ function renderResult() {
   judge.textContent = getRelaxedJudgeText(correct);
   if (record && !awardedForCurrentRun) {
     addScore(record, "test1", correct);
+    trackActivity(record, "dtx_test_completed", { test: "test1" });
     awardedForCurrentRun = true;
     persistRecord(record).catch(() => {});
     updateScoreboard();
@@ -325,6 +327,10 @@ async function init() {
   syncModeUI();
   updateScoreboard();
   record = await loadLatestRecordById(userId);
+  if (record) {
+    trackActivity(record, "page_view", { page: "test1" });
+    await persistRecord(record);
+  }
   updateScoreboard();
   app.addEventListener("click", onUserClick);
   guideButton.addEventListener("click", (event) => {

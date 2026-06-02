@@ -98,6 +98,20 @@ function safeJoin(base, target) {
   return resolved;
 }
 
+function getRecordFilePath(fileName) {
+  if (
+    typeof fileName !== "string"
+    || path.basename(fileName) !== fileName
+    || !fileName.endsWith(".json")
+    || fileName === "map-layout.json"
+  ) {
+    const error = new Error("Record not found");
+    error.code = "ENOENT";
+    throw error;
+  }
+  return path.join(databaseDir, fileName);
+}
+
 function getMapAssetVersion() {
   const files = [
     path.join(publicDir, "map", "index.html"),
@@ -316,6 +330,7 @@ function serveStatic(reqPath, res) {
     || reqPath.startsWith("/test2")
     || reqPath.startsWith("/test3")
     || reqPath.startsWith("/map")
+    || reqPath.startsWith("/analysis")
     || reqPath.startsWith("/plangame")
     || reqPath.startsWith("/dtx"))
     && [".html", ".js", ".css"].includes(ext)) {
@@ -334,7 +349,7 @@ function serveStatic(reqPath, res) {
 }
 
 function getRecordMeta(fileName) {
-  const filePath = path.join(databaseDir, fileName);
+  const filePath = getRecordFilePath(fileName);
   const raw = fs.readFileSync(filePath, "utf-8");
   const parsed = JSON.parse(raw);
   return {
@@ -344,6 +359,66 @@ function getRecordMeta(fileName) {
     updatedAt: parsed.updatedAt,
     currentStep: parsed.currentStep || "intro"
   };
+}
+
+function mergeResearchUsage(existingUsage, incomingUsage) {
+  const sessions = new Map();
+  const appendSessions = (usage) => {
+    if (!Array.isArray(usage?.sessions)) {
+      return;
+    }
+    for (const candidate of usage.sessions) {
+      if (!candidate || typeof candidate.sessionId !== "string") {
+        continue;
+      }
+      const prior = sessions.get(candidate.sessionId);
+      if (!prior) {
+        sessions.set(candidate.sessionId, candidate);
+        continue;
+      }
+      const activities = [...(prior.activities || []), ...(candidate.activities || [])];
+      const dedupedActivities = Array.from(
+        new Map(activities.map((activity) => [JSON.stringify(activity), activity])).values()
+      );
+      const latestActivityAt = [prior.lastActivityAt, candidate.lastActivityAt].filter(Boolean).sort();
+      sessions.set(candidate.sessionId, {
+        ...prior,
+        ...candidate,
+        lastActivityAt: latestActivityAt[latestActivityAt.length - 1],
+        durationMs: Math.max(Number(prior.durationMs || 0), Number(candidate.durationMs || 0)),
+        activities: dedupedActivities
+      });
+    }
+  };
+
+  appendSessions(existingUsage);
+  appendSessions(incomingUsage);
+  return {
+    version: 1,
+    sessions: Array.from(sessions.values()).sort((a, b) => String(a.connectedAt).localeCompare(String(b.connectedAt)))
+  };
+}
+
+function saveRecord(filePath, incomingRecord, writer = "main") {
+  let existingRecord = null;
+  if (fs.existsSync(filePath)) {
+    existingRecord = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  }
+  const mergedRecord = {
+    ...incomingRecord
+  };
+  if (existingRecord && writer !== "dtx") {
+    for (const field of ["dtx", "planGame", "tutorials"]) {
+      if (Object.prototype.hasOwnProperty.call(existingRecord, field)) {
+        mergedRecord[field] = existingRecord[field];
+      }
+    }
+  }
+  const researchUsage = mergeResearchUsage(existingRecord?.researchUsage, incomingRecord?.researchUsage);
+  if (researchUsage.sessions.length) {
+    mergedRecord.researchUsage = researchUsage;
+  }
+  fs.writeFileSync(filePath, JSON.stringify(mergedRecord, null, 2));
 }
 
 function clamp(value, min, max) {
@@ -528,7 +603,7 @@ function computeAssessmentMetrics(record) {
       ? "중간"
       : "낮음";
 
-  return {
+  const metrics = {
     surveyMode,
     hasAsrsSurvey,
     hasDsmSurvey,
@@ -569,6 +644,694 @@ function computeAssessmentMetrics(record) {
       impulse,
       emotion,
       structure
+    }
+  };
+  metrics.burdenPattern = buildBurdenPattern(metrics);
+  return metrics;
+}
+
+const analysisOldCutoff = process.env.ANALYSIS_OLD_CUTOFF || "2026-06-01T00:00:00.000Z";
+
+function isExplicitOldRecord(record, fileName) {
+  const haystack = [
+    fileName,
+    record?.id,
+    record?.old,
+    record?.isOld,
+    record?.dataset,
+    record?.dataSet,
+    record?.group,
+    record?.source,
+    record?.cohort,
+    ...(Array.isArray(record?.tags) ? record.tags : [])
+  ]
+    .filter((value) => value !== undefined && value !== null)
+    .map((value) => String(value).toLowerCase());
+
+  return haystack.some((value) => value === "old" || value.includes("old-data") || value.includes("old_data"));
+}
+
+function isOldAnalysisRecord(record, fileName) {
+  if (isExplicitOldRecord(record, fileName)) {
+    return true;
+  }
+
+  const createdAt = Date.parse(record?.createdAt || "");
+  const cutoff = Date.parse(analysisOldCutoff);
+  return Number.isFinite(createdAt) && Number.isFinite(cutoff) && createdAt < cutoff;
+}
+
+function readAnalysisRecords() {
+  return fs.readdirSync(databaseDir)
+    .filter((fileName) => fileName.endsWith(".json") && fileName !== "map-layout.json")
+    .map((fileName) => {
+      try {
+        const filePath = path.join(databaseDir, fileName);
+        const record = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        return {
+          fileName,
+          record,
+          createdAt: record.createdAt || "",
+          updatedAt: record.updatedAt || record.createdAt || "",
+          excludedAsOld: isOldAnalysisRecord(record, fileName)
+        };
+      } catch (error) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function getAnalysisUserKey(item) {
+  return String(item?.record?.id || item?.fileName || "").trim().toLowerCase();
+}
+
+function latestItemsByUser(items) {
+  const latest = new Map();
+  for (const item of items) {
+    const key = getAnalysisUserKey(item);
+    if (!key) {
+      continue;
+    }
+    const previous = latest.get(key);
+    const previousDate = Date.parse(previous?.updatedAt || previous?.createdAt || "");
+    const itemDate = Date.parse(item.updatedAt || item.createdAt || "");
+    if (!previous || (Number.isFinite(itemDate) && (!Number.isFinite(previousDate) || itemDate > previousDate))) {
+      latest.set(key, item);
+    }
+  }
+  return Array.from(latest.values());
+}
+
+function hasCompletedAsrs(record) {
+  return getAsrsResponses(record).length >= 6;
+}
+
+function hasStartedAsrs(record) {
+  return getAsrsResponses(record).length > 0;
+}
+
+function hasCompletedDsm(record) {
+  return getDsmResponses(record).length >= 23 || Number(analyzeDsmRecord(record).answeredCount || 0) >= 23;
+}
+
+function hasStartedDsm(record) {
+  return getDsmResponses(record).length > 0 || Number(analyzeDsmRecord(record).answeredCount || 0) > 0;
+}
+
+function hasCompletedReactivity(record) {
+  const game = record?.tests?.game;
+  return game?.status === "completed" || Boolean(game?.completedAt);
+}
+
+function getProgressStage(record) {
+  if (record?.report?.schemaVersion === 2 || record?.currentStep === "report" || record?.currentStep === "plan" || record?.currentStep === "hub") {
+    return "report";
+  }
+  if (hasCompletedReactivity(record)) {
+    return "reactivity_completed";
+  }
+  if (record?.tests?.game?.status === "running" || record?.currentStep === "game") {
+    return "reactivity_started";
+  }
+  if (hasCompletedAsrs(record) || hasCompletedDsm(record) || /result$/.test(String(record?.currentStep || ""))) {
+    return "survey_completed";
+  }
+  if (hasStartedAsrs(record) || hasStartedDsm(record) || record?.currentStep === "asrs" || record?.currentStep === "dsm") {
+    return "survey_started";
+  }
+  if (record?.currentStep === "id") {
+    return "id_created";
+  }
+  return "entered";
+}
+
+function getSurveySelection(record) {
+  const asrsStarted = hasStartedAsrs(record);
+  const dsmStarted = hasStartedDsm(record);
+  const asrsCompleted = hasCompletedAsrs(record);
+  const dsmCompleted = hasCompletedDsm(record);
+
+  if (asrsStarted && dsmStarted) {
+    return {
+      key: "both",
+      label: "간편+세부",
+      completed: asrsCompleted && dsmCompleted
+    };
+  }
+  if (asrsStarted) {
+    return {
+      key: "asrs",
+      label: "간편설문",
+      completed: asrsCompleted
+    };
+  }
+  if (dsmStarted) {
+    return {
+      key: "dsm",
+      label: "세부설문",
+      completed: dsmCompleted
+    };
+  }
+  return {
+    key: "none",
+    label: "미선택",
+    completed: false
+  };
+}
+
+function getReactivityStepCompletion(record) {
+  const tests = record?.tests?.game?.tests || {};
+  const completedKeys = [
+    tests.signal_detection ? "signal_detection" : "",
+    tests.go_nogo ? "go_nogo" : "",
+    tests.balance_hold ? "balance_hold" : ""
+  ].filter(Boolean);
+  const count = completedKeys.length;
+  const labels = {
+    0: "반응성 시작 전",
+    1: "1단계 신호탐지 완료",
+    2: "2단계 Go/No-Go 완료",
+    3: "3단계 균형유지 완료"
+  };
+
+  return {
+    count,
+    keys: completedKeys,
+    label: labels[count] || labels[0]
+  };
+}
+
+function incrementCount(target, key, amount = 1) {
+  target[key] = (target[key] || 0) + amount;
+}
+
+function toAnalysisPercent(count, total) {
+  return total ? Math.round((count / total) * 1000) / 10 : 0;
+}
+
+function averageAnalysis(values, digits = 1) {
+  const finite = values.map(Number).filter(Number.isFinite);
+  if (!finite.length) {
+    return null;
+  }
+  return roundTo(finite.reduce((sum, value) => sum + value, 0) / finite.length, digits);
+}
+
+function getSubjectiveBurden(metrics) {
+  if (metrics.hasAsrsSurvey) {
+    return Math.min(100, roundTo((metrics.asrsPositiveCount / 6) * 100, 1));
+  }
+  if (metrics.hasDsmSurvey) {
+    return Math.min(100, roundTo((metrics.dsmYesCount / 18) * 100, 1));
+  }
+  return null;
+}
+
+function getObjectiveBurden(metrics) {
+  const performanceScores = [
+    Number(metrics.signal?.score),
+    Number(metrics.goNogo?.score),
+    Number(metrics.balance?.score)
+  ].filter(Number.isFinite);
+  if (!performanceScores.length) {
+    return null;
+  }
+  const averagePerformance = performanceScores.reduce((sum, value) => sum + value, 0) / performanceScores.length;
+  return roundTo(clamp(100 - averagePerformance, 0, 100), 1);
+}
+
+function buildBurdenPattern(metrics) {
+  const subjectiveBurden = getSubjectiveBurden(metrics);
+  const performanceBurden = getObjectiveBurden(metrics);
+  const threshold = 50;
+  const subjectiveHigh = Number(subjectiveBurden) >= threshold;
+  const performanceHigh = Number(performanceBurden) >= threshold;
+
+  let type = "낮은 신호형";
+  let summary = "자가부담과 수행부담이 모두 낮은 편입니다.";
+  let guidance = "현재 결과만 보면 비교적 안정적인 흐름으로 볼 수 있지만, 이 결과만으로 단정하지 않고 수면, 스트레스, 환경 변화에 따른 차이를 함께 살펴보는 것이 좋습니다.";
+
+  if (subjectiveHigh && performanceHigh) {
+    type = "수렴형 어려움형";
+    summary = "자가부담과 수행부담이 모두 높게 나타난 패턴입니다.";
+    guidance = "스스로 느끼는 어려움과 과제 수행 신호가 같은 방향으로 모이므로, 어려움이 일상에서 지속된다면 추가 전문가 평가가 도움이 될 수 있습니다.";
+  } else if (subjectiveHigh && !performanceHigh) {
+    type = "주관적 어려움 우세형";
+    summary = "자가부담은 높지만 수행부담은 상대적으로 낮게 나타난 패턴입니다.";
+    guidance = "과제 상황에서는 비교적 안정적이더라도 생활 장면의 부담이 클 수 있으므로, 실제 생활 맥락과 기능 손상 여부를 함께 확인하는 것이 필요합니다.";
+  } else if (!subjectiveHigh && performanceHigh) {
+    type = "수행 불안정성 우세형";
+    summary = "자가부담은 낮지만 수행부담이 상대적으로 높게 나타난 패턴입니다.";
+    guidance = "스스로 체감하는 어려움은 크지 않아도 과제 수행에서 흔들림이 보일 수 있으므로, 수면, 피로, 긴장도, 과제 이해 여부를 함께 확인하는 것이 좋습니다.";
+  }
+
+  return {
+    type,
+    summary,
+    guidance,
+    subjectiveBurdenScore: subjectiveBurden,
+    performanceBurdenScore: performanceBurden,
+    threshold,
+    subjectiveLevel: subjectiveHigh ? "높음" : "낮음",
+    performanceLevel: performanceHigh ? "높음" : "낮음",
+    note: "자가부담은 설문 응답을 0-100점으로 환산하고, 수행부담은 반응성 과제 수행 점수의 평균을 100점에서 뺀 값입니다. 두 점수 모두 높을수록 부담 신호가 큰 것으로 해석합니다."
+  };
+}
+
+function spreadObjectiveBurden(points) {
+  const values = points
+    .map((point) => Number(point.objectiveBurden))
+    .filter(Number.isFinite);
+  if (!values.length) {
+    return {
+      min: null,
+      max: null,
+      method: "no-data"
+    };
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min;
+  for (const point of points) {
+    point.rawObjectiveBurden = point.objectiveBurden;
+    point.objectiveBurden = range
+      ? roundTo(((point.rawObjectiveBurden - min) / range) * 100, 1)
+      : 50;
+  }
+
+  return {
+    min: roundTo(min, 1),
+    max: roundTo(max, 1),
+    method: range ? "min-max" : "constant-midpoint"
+  };
+}
+
+function averageFiniteAnalysis(values, digits = 1) {
+  const finite = values.map(Number).filter(Number.isFinite);
+  if (!finite.length) {
+    return null;
+  }
+  return roundTo(finite.reduce((sum, value) => sum + value, 0) / finite.length, digits);
+}
+
+function getDomainScores(metrics) {
+  const subjectiveInattention = metrics.hasAsrsSurvey
+    ? Math.min(100, roundTo((metrics.asrsAttentionScore / 16) * 100, 1))
+    : metrics.hasDsmSurvey
+      ? Math.min(100, roundTo((metrics.dsmInattentionYesCount / 9) * 100, 1))
+      : null;
+  const subjectiveImpulsivity = metrics.hasAsrsSurvey
+    ? Math.min(100, roundTo((metrics.asrsImpulseScore / 8) * 100, 1))
+    : metrics.hasDsmSurvey
+      ? Math.min(100, roundTo((metrics.dsmHyperactivityYesCount / 9) * 100, 1))
+      : null;
+  const signalScore = Number(metrics.signal?.score);
+  const goNogoScore = Number(metrics.goNogo?.score);
+  const reactivityInattention = Number.isFinite(signalScore)
+    ? Math.min(100, Math.max(0, roundTo(signalScore, 1)))
+    : null;
+  const reactivityImpulsivity = Number.isFinite(goNogoScore)
+    ? Math.min(100, Math.max(0, roundTo(goNogoScore, 1)))
+    : null;
+
+  return {
+    subjectiveInattention,
+    subjectiveImpulsivity,
+    reactivityInattention,
+    reactivityImpulsivity
+  };
+}
+
+function rankAverage(values) {
+  return values
+    .map((value, index) => ({ value, index }))
+    .sort((a, b) => a.value - b.value)
+    .reduce((ranks, item, sortedIndex, sorted) => {
+      if (ranks[item.index] !== undefined) {
+        return ranks;
+      }
+      let endIndex = sortedIndex;
+      while (endIndex + 1 < sorted.length && sorted[endIndex + 1].value === item.value) {
+        endIndex += 1;
+      }
+      const averageRank = (sortedIndex + 1 + endIndex + 1) / 2;
+      for (let cursor = sortedIndex; cursor <= endIndex; cursor += 1) {
+        ranks[sorted[cursor].index] = averageRank;
+      }
+      return ranks;
+    }, []);
+}
+
+function pearsonCorrelation(xValues, yValues) {
+  const n = Math.min(xValues.length, yValues.length);
+  if (n < 2) {
+    return null;
+  }
+  const xMean = xValues.reduce((sum, value) => sum + value, 0) / n;
+  const yMean = yValues.reduce((sum, value) => sum + value, 0) / n;
+  let numerator = 0;
+  let xSumSquares = 0;
+  let ySumSquares = 0;
+  for (let index = 0; index < n; index += 1) {
+    const xDiff = xValues[index] - xMean;
+    const yDiff = yValues[index] - yMean;
+    numerator += xDiff * yDiff;
+    xSumSquares += xDiff ** 2;
+    ySumSquares += yDiff ** 2;
+  }
+  const denominator = Math.sqrt(xSumSquares * ySumSquares);
+  return denominator ? numerator / denominator : null;
+}
+
+function spearmanCorrelation(points, xKey = "subjectiveBurden", yKey = "objectiveBurden") {
+  const pairs = points
+    .map((point) => [Number(point[xKey]), Number(point[yKey])])
+    .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+  if (pairs.length < 2) {
+    return { n: pairs.length, rho: null };
+  }
+
+  const xRanks = rankAverage(pairs.map(([x]) => x));
+  const yRanks = rankAverage(pairs.map(([, y]) => y));
+  const rho = pearsonCorrelation(xRanks, yRanks);
+  return {
+    n: pairs.length,
+    rho: rho === null ? null : roundTo(rho, 3)
+  };
+}
+
+function kendallTauB(points, xKey = "subjectiveBurden", yKey = "objectiveBurden") {
+  const pairs = points
+    .map((point) => [Number(point[xKey]), Number(point[yKey])])
+    .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+  let concordant = 0;
+  let discordant = 0;
+  let xTies = 0;
+  let yTies = 0;
+
+  for (let i = 0; i < pairs.length - 1; i += 1) {
+    for (let j = i + 1; j < pairs.length; j += 1) {
+      const xDiff = pairs[i][0] - pairs[j][0];
+      const yDiff = pairs[i][1] - pairs[j][1];
+      if (xDiff === 0 && yDiff === 0) {
+        xTies += 1;
+        yTies += 1;
+        continue;
+      }
+      if (xDiff === 0) {
+        xTies += 1;
+        continue;
+      }
+      if (yDiff === 0) {
+        yTies += 1;
+        continue;
+      }
+      if (xDiff * yDiff > 0) {
+        concordant += 1;
+      } else {
+        discordant += 1;
+      }
+    }
+  }
+
+  const denominator = Math.sqrt((concordant + discordant + xTies) * (concordant + discordant + yTies));
+  const tau = denominator ? (concordant - discordant) / denominator : null;
+  return {
+    n: pairs.length,
+    tau: tau === null ? null : roundTo(tau, 3),
+    concordant,
+    discordant,
+    xTies,
+    yTies
+  };
+}
+
+function pearsonCorrelationForPoints(points, xKey, yKey) {
+  const pairs = points
+    .map((point) => [Number(point[xKey]), Number(point[yKey])])
+    .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+  const r = pearsonCorrelation(pairs.map(([x]) => x), pairs.map(([, y]) => y));
+  return {
+    n: pairs.length,
+    r: r === null ? null : roundTo(r, 3)
+  };
+}
+
+function buildDomainCorrelation(points, xKey, yKey, label) {
+  const pearson = pearsonCorrelationForPoints(points, xKey, yKey);
+  const spearman = spearmanCorrelation(points, xKey, yKey);
+  const kendall = kendallTauB(points, xKey, yKey);
+  return {
+    label,
+    xKey,
+    yKey,
+    n: pearson.n,
+    pearson,
+    spearman,
+    kendall,
+    interpretation: describeCorrelation(spearman.rho)
+  };
+}
+
+function describeCorrelation(value) {
+  if (value === null || value === undefined) {
+    return "계산 불가";
+  }
+  const abs = Math.abs(Number(value));
+  const direction = value > 0 ? "양의" : value < 0 ? "음의" : "거의 없는";
+  const strength = abs >= 0.7
+    ? "강한"
+    : abs >= 0.4
+      ? "중간 정도"
+      : abs >= 0.2
+        ? "약한"
+        : "매우 약한";
+  return `${strength} ${direction} 순위 관계`;
+}
+
+function buildAnalysisSummary() {
+  const allItems = readAnalysisRecords();
+  const activeItems = allItems.filter((item) => !item.excludedAsOld);
+  const latestUsers = latestItemsByUser(activeItems);
+  const totalUsers = latestUsers.length;
+
+  const recordsByUser = new Map();
+  for (const item of activeItems) {
+    const key = getAnalysisUserKey(item);
+    if (!key) {
+      continue;
+    }
+    if (!recordsByUser.has(key)) {
+      recordsByUser.set(key, []);
+    }
+    recordsByUser.get(key).push(item);
+  }
+
+  const returningUsers = Array.from(recordsByUser.values()).filter((items) => {
+    if (items.length > 1) {
+      return true;
+    }
+    const sessions = items[0]?.record?.researchUsage?.sessions;
+    return Array.isArray(sessions) && sessions.length > 1;
+  }).length;
+
+  const stageLabels = {
+    entered: "접속",
+    id_created: "ID 생성",
+    survey_started: "설문 진행 중",
+    survey_completed: "설문 완료",
+    reactivity_started: "반응성 진행 중",
+    reactivity_completed: "반응성 완료",
+    report: "리포트/허브"
+  };
+  const surveyLabels = {
+    none: "미선택",
+    asrs: "간편설문",
+    dsm: "세부설문",
+    both: "간편+세부"
+  };
+  const stageCounts = {};
+  const surveyCounts = {};
+  const surveyCompletionCounts = {};
+  const reactivityProgressCounts = {};
+  let reactivityInProgressTotal = 0;
+
+  for (const item of latestUsers) {
+    const record = item.record;
+    const stage = getProgressStage(record);
+    incrementCount(stageCounts, stage);
+    if (stage === "reactivity_started") {
+      const completion = getReactivityStepCompletion(record);
+      incrementCount(reactivityProgressCounts, String(completion.count));
+      reactivityInProgressTotal += 1;
+    }
+    const selection = getSurveySelection(record);
+    incrementCount(surveyCounts, selection.key);
+    if (selection.completed) {
+      incrementCount(surveyCompletionCounts, selection.key);
+    }
+  }
+
+  const reactivityExcludedIds = new Set(["team3", "yonsei"]);
+  const reactivityItems = latestItemsByUser(activeItems.filter((item) => {
+    const id = getAnalysisUserKey(item);
+    return hasCompletedReactivity(item.record) && !reactivityExcludedIds.has(id);
+  })).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+
+  const alignmentCounts = {};
+  const subjectiveDomainCounts = {};
+  const objectiveDomainCounts = {};
+  const crossTable = {};
+  const scatter = [];
+  const domainPoints = [];
+  const metricRows = [];
+
+  for (const [index, item] of reactivityItems.entries()) {
+    const metrics = computeAssessmentMetrics(item.record);
+    const analysisLabel = index + 1;
+    incrementCount(alignmentCounts, metrics.alignment);
+    incrementCount(subjectiveDomainCounts, metrics.subjectiveDomain);
+    incrementCount(objectiveDomainCounts, metrics.objectiveDomain);
+    if (!crossTable[metrics.subjectiveDomain]) {
+      crossTable[metrics.subjectiveDomain] = {};
+    }
+    incrementCount(crossTable[metrics.subjectiveDomain], metrics.objectiveDomain);
+
+    const subjectiveBurden = getSubjectiveBurden(metrics);
+    const objectiveBurden = getObjectiveBurden(metrics);
+    const domainScores = getDomainScores(metrics);
+    if (subjectiveBurden !== null && objectiveBurden !== null) {
+      scatter.push({
+        label: analysisLabel,
+        id: item.record.id,
+        createdAt: item.createdAt,
+        surveyMode: metrics.surveyMode,
+        subjectiveDomain: metrics.subjectiveDomain,
+        objectiveDomain: metrics.objectiveDomain,
+        alignment: metrics.alignment,
+        subjectiveBurden,
+        objectiveBurden
+      });
+    }
+    if (
+      domainScores.subjectiveInattention !== null
+      && domainScores.subjectiveImpulsivity !== null
+      && domainScores.reactivityInattention !== null
+      && domainScores.reactivityImpulsivity !== null
+    ) {
+      domainPoints.push({
+        label: analysisLabel,
+        id: item.record.id,
+        createdAt: item.createdAt,
+        surveyMode: metrics.surveyMode,
+        subjectiveDomain: metrics.subjectiveDomain,
+        objectiveDomain: metrics.objectiveDomain,
+        alignment: metrics.alignment,
+        ...domainScores
+      });
+    }
+
+    metricRows.push(metrics);
+  }
+
+  const objectiveBurdenScale = spreadObjectiveBurden(scatter);
+  const spearman = spearmanCorrelation(scatter);
+  const kendall = kendallTauB(scatter);
+  const domainCorrelations = [
+    buildDomainCorrelation(domainPoints, "subjectiveInattention", "reactivityInattention", "자가보고 부주의 부담 x 신호탐지 안정 점수"),
+    buildDomainCorrelation(domainPoints, "subjectiveInattention", "reactivityImpulsivity", "자가보고 부주의 부담 x Go/No-Go 안정 점수"),
+    buildDomainCorrelation(domainPoints, "subjectiveImpulsivity", "reactivityInattention", "자가보고 충동성 부담 x 신호탐지 안정 점수"),
+    buildDomainCorrelation(domainPoints, "subjectiveImpulsivity", "reactivityImpulsivity", "자가보고 충동성 부담 x Go/No-Go 안정 점수")
+  ];
+  const strongestDomainCorrelation = domainCorrelations
+    .filter((item) => item.spearman.rho !== null)
+    .sort((a, b) => Math.abs(b.spearman.rho) - Math.abs(a.spearman.rho))[0] || null;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    filters: {
+      oldCutoff: analysisOldCutoff,
+      oldExcludedRecords: allItems.filter((item) => item.excludedAsOld).length,
+      reactivityExcludedIds: Array.from(reactivityExcludedIds)
+    },
+    totals: {
+      totalUsers,
+      totalRecords: activeItems.length,
+      returningUsers,
+      returningRate: toAnalysisPercent(returningUsers, totalUsers)
+    },
+    progress: {
+      stages: Object.entries(stageLabels).map(([key, label]) => ({
+        key,
+        label,
+        count: stageCounts[key] || 0,
+        percent: toAnalysisPercent(stageCounts[key] || 0, totalUsers)
+      })),
+      reactivityInProgress: [0, 1, 2, 3].map((stepCount) => {
+        const completion = { count: stepCount, label: getReactivityStepCompletion({ tests: { game: { tests: {
+          signal_detection: stepCount >= 1 ? {} : null,
+          go_nogo: stepCount >= 2 ? {} : null,
+          balance_hold: stepCount >= 3 ? {} : null
+        } } } }).label };
+        return {
+          key: String(stepCount),
+          label: completion.label,
+          count: reactivityProgressCounts[String(stepCount)] || 0,
+          percent: toAnalysisPercent(reactivityProgressCounts[String(stepCount)] || 0, reactivityInProgressTotal)
+        };
+      }),
+      surveySelection: Object.entries(surveyLabels).map(([key, label]) => ({
+        key,
+        label,
+        count: surveyCounts[key] || 0,
+        completed: surveyCompletionCounts[key] || 0,
+        percent: toAnalysisPercent(surveyCounts[key] || 0, totalUsers)
+      }))
+    },
+    reactivity: {
+      completedUsers: reactivityItems.length,
+      analysisMethod: [
+        "사용자 단위 최신 완료 기록을 기준으로 집계했습니다.",
+        "자가보고는 선택한 설문의 부주의 지표와 충동성 지표로 나누어 0-100점으로 환산했습니다.",
+        "반응성 테스트는 원래 앱 점수 방향을 그대로 사용했습니다. 신호탐지 안정 점수와 Go/No-Go 안정 점수는 높을수록 수행이 안정적이고 관련 부담 신호가 낮다는 뜻입니다.",
+        "2x2 조합(자가보고 부주의/충동성 부담 x 반응성 안정 점수)에 대해 Pearson r, Spearman rho, Kendall tau-b를 계산했습니다."
+      ],
+      interpretation: {
+        alignment: alignmentCounts,
+        subjectiveDomain: subjectiveDomainCounts,
+        objectiveDomain: objectiveDomainCounts,
+        crossTable,
+        summary: domainPoints.length
+          ? `반응성 테스트 완료자 ${domainPoints.length}명 기준 2x2 도메인 상관을 계산했습니다. 가장 큰 순위상관은 ${strongestDomainCorrelation?.label || "-"}이며 Spearman rho=${strongestDomainCorrelation?.spearman?.rho ?? "-"}입니다.`
+          : "반응성 테스트까지 완료한 분석 대상자가 아직 없습니다."
+      },
+      metricAverages: {
+        omissionRatePct: averageAnalysis(metricRows.map((metrics) => metrics.omissionRate * 100)),
+        commissionRatePct: averageAnalysis(metricRows.map((metrics) => metrics.commissionRate * 100)),
+        reactionVariabilityMs: averageAnalysis(metricRows.map((metrics) => metrics.reactionVariability)),
+        fastErrorRatePct: averageAnalysis(metricRows.map((metrics) => metrics.fastErrorRate * 100)),
+        stableDurationPct: averageAnalysis(metricRows.map((metrics) => metrics.stableDurationPct))
+      },
+      correlation: {
+        spearman: {
+          ...spearman,
+          label: "Spearman rho",
+          interpretation: describeCorrelation(spearman.rho)
+        },
+        kendall: {
+          ...kendall,
+          label: "Kendall tau-b",
+          interpretation: describeCorrelation(kendall.tau)
+        },
+        domainMatrix: domainCorrelations,
+        strongest: strongestDomainCorrelation,
+        note: "표본 수가 작아 p값 중심의 유의성 판단보다 방향과 효과크기 참고용으로 해석해야 합니다."
+      },
+      domainPoints,
+      scatter,
+      objectiveBurdenScale
     }
   };
 }
@@ -763,18 +1526,19 @@ function buildDeterministicReport(metrics) {
         badges,
         summary: heroSummary
       },
-      crossCheck: {
-        subjectiveTitle: `${surveyLabel}에서는 ${subjectiveDomainLabel} 쪽 부담이 더 보여요`,
-        subjectiveText,
-        objectiveTitle: `수행 과제에서는 ${objectiveDomainLabel} 쪽 패턴이 더 보여요`,
-        objectiveText,
-        alignmentLabel: buildAlignmentLabel(metrics.alignment),
-        alignmentSummary
-      },
-      profile: {
-        inattentionSummary,
-        impulsivitySummary,
-        hyperactivitySummary
+	      crossCheck: {
+	        subjectiveTitle: `${surveyLabel}에서는 ${subjectiveDomainLabel} 쪽 부담이 더 보여요`,
+	        subjectiveText,
+	        objectiveTitle: `수행 과제에서는 ${objectiveDomainLabel} 쪽 패턴이 더 보여요`,
+	        objectiveText,
+	        alignmentLabel: buildAlignmentLabel(metrics.alignment),
+	        alignmentSummary
+	      },
+	      burdenPattern: metrics.burdenPattern,
+	      profile: {
+	        inattentionSummary,
+	        impulsivitySummary,
+	        hyperactivitySummary
       },
       dailyImpact: {
         level: metrics.dailyImpactLevel,
@@ -887,8 +1651,16 @@ function buildInsightsPrompt(record, metrics) {
     "교차 분석 지침: 사용자가 느끼는 일상 어려움과 게임 기반 수행 지표가 비슷한지 분명히 짚기",
     `선택 설문 지침: ${selectedSurvey}`,
     "결과 구조 지침: 사용자는 ASRS와 DSM 중 하나만 선택해서 진행합니다. 리포트와 플랜에서 두 설문을 모두 완료한 것처럼 말하지 말 것",
-    "수치 사용 지침: JSON에 실제 존재하는 숫자만 인용하고, 없는 오류 횟수나 반응시간은 추정해서 쓰지 말 것",
-    "간단 자기점검 해석 기준:",
+	    "수치 사용 지침: JSON에 실제 존재하는 숫자만 인용하고, 없는 오류 횟수나 반응시간은 추정해서 쓰지 말 것",
+	    "자가부담-수행부담 2x2 해석 지침:",
+	    "- metrics.burdenPattern을 리포트에 반드시 반영할 것",
+	    "- 자가부담과 수행부담은 모두 높을수록 부담 신호가 큰 점수임",
+	    "- 둘 다 높음: 수렴형 어려움형. 추가 전문가 평가가 도움이 될 수 있다고 안내",
+	    "- 자가부담 높음, 수행부담 낮음: 주관적 어려움 우세형. 생활의 맥락과 기능 손상의 확인이 필요하다고 안내",
+	    "- 자가부담 낮음, 수행부담 높음: 수행 불안정성 우세형. 수면, 피로, 과제 이해 확인을 안내",
+	    "- 둘 다 낮음: 낮은 신호형. 안정적으로 볼 수 있지만 단정하지 않도록 안내",
+	    "- report.burdenPattern.type은 metrics.burdenPattern.type의 네 유형명 중 하나를 그대로 사용할 것",
+	    "간단 자기점검 해석 기준:",
     "- 1, 2, 3번 문항은 가끔(2) 이상이면 일상 부담 응답으로 참고",
     "- 4, 5, 6번 문항은 자주(3) 이상이면 일상 부담 응답으로 참고",
     "- 부담 응답이 4개 이상이면 주의·집중 또는 실행 기능 부담이 비교적 크게 나타난 패턴으로 해석",
@@ -921,16 +1693,17 @@ function buildInsightsPrompt(record, metrics) {
     "4. report.crossCheck.subjectiveTitle, subjectiveText는 사용자가 선택한 설문 하나를 기준으로 한 일상 어려움 설명",
     "5. report.crossCheck.objectiveTitle, objectiveText는 반응성 과제 기준의 수행 패턴 설명",
     "6. report.crossCheck.alignmentLabel은 일치 여부를 보여주는 짧은 뱃지 문구",
-    "7. report.crossCheck.alignmentSummary는 두 결과의 일치/불일치를 해석하는 1~2문장",
-    "8. report.profile.inattentionSummary는 선택한 설문 응답과 목표 놓침/반응시간 변동성 지표를 쉬운 말로 종합한 설명",
-    "9. report.profile.impulsivitySummary는 선택한 설문 응답과 잘못된 반응 지표를 쉬운 말로 종합한 설명",
-    "10. report.dailyImpact.empathy는 선택한 설문 결과를 바탕으로 한 일상 피로도 공감 메시지",
-    "11. report.sections.strength는 보호 요인과 강점 신호",
-    "12. report.sections.watchout는 자기점검 도구의 한계와 전문가 상담 고려 안내",
-    "13. plan.suggestions는 위 실행계획 기준을 지킨 한국어 문장 3개",
-    "14. plan.openingMessage는 사용자가 생활 패턴에 맞춰 계획 수정을 요청할 수 있게 유도하는 1~2문장"
-  ].join("\n");
-}
+	    "7. report.crossCheck.alignmentSummary는 두 결과의 일치/불일치를 해석하는 1~2문장",
+	    "8. report.burdenPattern은 metrics.burdenPattern의 점수와 유형을 유지하고, summary/guidance만 사용자에게 자연스러운 1문장으로 다듬기",
+	    "9. report.profile.inattentionSummary는 선택한 설문 응답과 목표 놓침/반응시간 변동성 지표를 쉬운 말로 종합한 설명",
+	    "10. report.profile.impulsivitySummary는 선택한 설문 응답과 잘못된 반응 지표를 쉬운 말로 종합한 설명",
+	    "11. report.dailyImpact.empathy는 선택한 설문 결과를 바탕으로 한 일상 피로도 공감 메시지",
+	    "12. report.sections.strength는 보호 요인과 강점 신호",
+	    "13. report.sections.watchout는 자기점검 도구의 한계와 전문가 상담 고려 안내",
+	    "14. plan.suggestions는 위 실행계획 기준을 지킨 한국어 문장 3개",
+	    "15. plan.openingMessage는 사용자가 생활 패턴에 맞춰 계획 수정을 요청할 수 있게 유도하는 1~2문장"
+	  ].join("\n");
+	}
 
 function buildChatPrompt(record, message, metrics) {
   return [
@@ -1067,10 +1840,15 @@ async function generateInsights(record) {
         '      "subjectiveText": "string",',
         '      "objectiveTitle": "string",',
         '      "objectiveText": "string",',
-        '      "alignmentLabel": "string",',
-        '      "alignmentSummary": "string"',
-        "    },",
-        '    "profile": {',
+	        '      "alignmentLabel": "string",',
+	        '      "alignmentSummary": "string"',
+	        "    },",
+	        '    "burdenPattern": {',
+	        '      "type": "수렴형 어려움형|주관적 어려움 우세형|수행 불안정성 우세형|낮은 신호형",',
+	        '      "summary": "string",',
+	        '      "guidance": "string"',
+	        "    },",
+	        '    "profile": {',
         '      "inattentionSummary": "string",',
         '      "impulsivitySummary": "string"',
         "    },",
@@ -1110,15 +1888,26 @@ async function generateInsights(record) {
           : deterministic.report.hero.badges,
         summary: mergedReport.hero?.summary || deterministic.report.hero.summary
       },
-      crossCheck: {
-        subjectiveTitle: mergedReport.crossCheck?.subjectiveTitle || deterministic.report.crossCheck.subjectiveTitle,
-        subjectiveText: mergedReport.crossCheck?.subjectiveText || deterministic.report.crossCheck.subjectiveText,
-        objectiveTitle: mergedReport.crossCheck?.objectiveTitle || deterministic.report.crossCheck.objectiveTitle,
-        objectiveText: mergedReport.crossCheck?.objectiveText || deterministic.report.crossCheck.objectiveText,
-        alignmentLabel: mergedReport.crossCheck?.alignmentLabel || deterministic.report.crossCheck.alignmentLabel,
-        alignmentSummary: mergedReport.crossCheck?.alignmentSummary || deterministic.report.crossCheck.alignmentSummary
-      },
-      profile: {
+	      crossCheck: {
+	        subjectiveTitle: mergedReport.crossCheck?.subjectiveTitle || deterministic.report.crossCheck.subjectiveTitle,
+	        subjectiveText: mergedReport.crossCheck?.subjectiveText || deterministic.report.crossCheck.subjectiveText,
+	        objectiveTitle: mergedReport.crossCheck?.objectiveTitle || deterministic.report.crossCheck.objectiveTitle,
+	        objectiveText: mergedReport.crossCheck?.objectiveText || deterministic.report.crossCheck.objectiveText,
+	        alignmentLabel: mergedReport.crossCheck?.alignmentLabel || deterministic.report.crossCheck.alignmentLabel,
+	        alignmentSummary: mergedReport.crossCheck?.alignmentSummary || deterministic.report.crossCheck.alignmentSummary
+	      },
+	      burdenPattern: {
+	        ...deterministic.report.burdenPattern,
+	        ...(mergedReport.burdenPattern || {}),
+	        type: deterministic.report.burdenPattern.type,
+	        subjectiveBurdenScore: deterministic.report.burdenPattern.subjectiveBurdenScore,
+	        performanceBurdenScore: deterministic.report.burdenPattern.performanceBurdenScore,
+	        threshold: deterministic.report.burdenPattern.threshold,
+	        subjectiveLevel: deterministic.report.burdenPattern.subjectiveLevel,
+	        performanceLevel: deterministic.report.burdenPattern.performanceLevel,
+	        note: deterministic.report.burdenPattern.note
+	      },
+	      profile: {
         inattentionSummary: mergedReport.profile?.inattentionSummary || deterministic.report.profile.inattentionSummary,
         impulsivitySummary: mergedReport.profile?.impulsivitySummary || deterministic.report.profile.impulsivitySummary,
         hyperactivitySummary: mergedReport.profile?.hyperactivitySummary || deterministic.report.profile.hyperactivitySummary || ""
@@ -1269,6 +2058,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/api/analysis") {
+      sendJson(res, 200, buildAnalysisSummary());
+      return;
+    }
+
     if (req.method === "GET" && pathname === "/api/design-themes") {
       const themes = listDesignThemes().map((theme) => ({
         slug: theme.slug,
@@ -1315,7 +2109,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && pathname.startsWith("/api/records/")) {
       const fileName = pathname.replace("/api/records/", "");
-      const filePath = safeJoin(databaseDir, fileName);
+      const filePath = getRecordFilePath(fileName);
       const raw = fs.readFileSync(filePath, "utf-8");
       sendJson(res, 200, JSON.parse(raw));
       return;
@@ -1330,8 +2124,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const filePath = safeJoin(databaseDir, payload.fileName);
-      fs.writeFileSync(filePath, JSON.stringify(payload.data, null, 2));
+      const filePath = getRecordFilePath(payload.fileName);
+      saveRecord(filePath, payload.data, payload.writer);
       sendJson(res, 200, { ok: true, fileName: payload.fileName });
       return;
     }

@@ -11,9 +11,6 @@ const state = {
   asrsIndex: 0,
   dsmIndex: 0,
   isGeneratingInsights: false,
-  isGeneratingAsrsAnalysis: false,
-  isGeneratingDsmAnalysis: false,
-  isGeneratingReactivityAnalysis: false,
   loadUserId: "",
   pendingResumeFileName: "",
   pendingResumeRoute: "",
@@ -57,6 +54,11 @@ const bottomNav = document.querySelector("#bottom-nav");
 const topbarActions = document.querySelector("#topbar-actions");
 const themeNameplate = document.querySelector("#theme-nameplate");
 const THEME_FONT_SCALE_STORAGE_KEY = "soulai-theme-font-scale-enabled";
+const RESEARCH_SESSION_ID = typeof window.crypto?.randomUUID === "function"
+  ? window.crypto.randomUUID()
+  : `main-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const RESEARCH_SESSION_STARTED_AT = new Date().toISOString();
+const RESEARCH_HEARTBEAT_MS = 30000;
 const GAME_ORDER = ["signal_detection", "go_nogo", "balance_hold"];
 const GAME_META = {
   signal_detection: {
@@ -101,7 +103,7 @@ const GO_NOGO_MIN_VALID_RT_MS = 100;
 const GO_NOGO_SUCCESS_MIN_RT_MS = 140;
 const GO_NOGO_APPLE_TOUCH_VISUAL_OFFSET_MS = 380;
 const GO_NOGO_TOUCH_GRACE_MS = 10;
-const GO_NOGO_RESPONSE_WINDOW_EXTENSION_MS = 350;
+const GO_NOGO_RESPONSE_WINDOW_EXTENSION_MS = 600;
 const GO_NOGO_FAST_RESPONSE_MS = 200;
 const BALANCE_PRACTICE_DURATION_MS = 8000;
 const GO_NOGO_BACKGROUND_IMAGE = `${GO_NOGO_IMAGE_BASE_PATH}/back.gif`;
@@ -114,6 +116,11 @@ const GO_NOGO_STIMULUS_IMAGES = {
   go: `${GO_NOGO_IMAGE_BASE_PATH}/o.gif`,
   nogo: `${GO_NOGO_IMAGE_BASE_PATH}/x.gif`
 };
+const GO_NOGO_PRELOAD_IMAGES = [
+  GO_NOGO_BACKGROUND_IMAGE,
+  ...Object.values(GO_NOGO_FEEDBACK_IMAGES),
+  ...Object.values(GO_NOGO_STIMULUS_IMAGES)
+];
 const IMAGE_ASSET_VERSION = "2";
 state.introImageSrc = getRandomIntroImageSrc();
 const SIGNAL_DISTRACTOR_IMAGES = [1, 2, 3, 4, 5].map((index) => ({
@@ -121,6 +128,12 @@ const SIGNAL_DISTRACTOR_IMAGES = [1, 2, 3, 4, 5].map((index) => ({
   variant: index,
   imageSrc: `${SIGNAL_IMAGE_BASE_PATH}/${index}.gif`
 }));
+const SIGNAL_PRELOAD_IMAGES = [
+  SIGNAL_TARGET_IMAGE,
+  ...SIGNAL_DISTRACTOR_IMAGES.map((item) => item.imageSrc),
+  ...Object.values(SIGNAL_FEEDBACK_IMAGES),
+  `${SIGNAL_IMAGE_BASE_PATH}/back.gif`
+];
 const gameRuntime = {
   timeouts: new Set(),
   intervalId: null,
@@ -140,6 +153,11 @@ init();
 
 async function init() {
   hydrateThemePreferences();
+  bindResearchUsageLifecycle();
+  preloadImageAssets([
+    ...SIGNAL_PRELOAD_IMAGES,
+    ...GO_NOGO_PRELOAD_IMAGES
+  ]);
   await Promise.all([
     loadConfigs(),
     loadRecords(),
@@ -157,6 +175,17 @@ async function init() {
     await ensureInsights().catch((error) => setStatus(error.message));
   }
   render();
+}
+
+function preloadImageAssets(srcList) {
+  for (const src of srcList) {
+    if (!src) {
+      continue;
+    }
+    const image = new Image();
+    image.decoding = "async";
+    image.src = src;
+  }
 }
 
 function hydrateThemePreferences() {
@@ -312,30 +341,35 @@ function setThemeCssVar(name, value) {
   document.documentElement.style.setProperty(name, value);
 }
 
+function bumpThemeFontSize(value, fallback) {
+  const resolved = value || fallback;
+  return resolved ? `calc(${resolved} + var(--main-font-bump))` : "";
+}
+
 function applyThemeTypographyScale(theme) {
   const typography = theme?.resolved?.typography || {};
   const enabled = state.themeFontScaleEnabled;
 
-  setThemeCssVar("--theme-brand-title-size", enabled ? (typography["title-sm"]?.fontSize || "1.05rem") : "1.05rem");
+  setThemeCssVar("--theme-brand-title-size", bumpThemeFontSize(enabled ? typography["title-sm"]?.fontSize : "", "1.05rem"));
   setThemeCssVar("--theme-brand-title-letter-spacing", enabled ? (typography["title-sm"]?.letterSpacing || "0.02em") : "0.02em");
-  setThemeCssVar("--theme-brand-subtitle-size", enabled ? (typography.caption?.fontSize || "0.54rem") : "0.54rem");
+  setThemeCssVar("--theme-brand-subtitle-size", bumpThemeFontSize(enabled ? typography.caption?.fontSize : "", "0.54rem"));
   setThemeCssVar("--theme-brand-subtitle-letter-spacing", enabled ? (typography["label-uppercase"]?.letterSpacing || "0.18em") : "0.18em");
-  setThemeCssVar("--theme-nav-label-size", enabled ? (typography["label-uppercase"]?.fontSize || "9px") : "9px");
+  setThemeCssVar("--theme-nav-label-size", bumpThemeFontSize(enabled ? typography["label-uppercase"]?.fontSize : "", "9px"));
   setThemeCssVar("--theme-nav-label-letter-spacing", enabled ? (typography["label-uppercase"]?.letterSpacing || "0.08em") : "0.08em");
-  setThemeCssVar("--theme-eyebrow-size", enabled ? (typography["label-uppercase"]?.fontSize || "10px") : "10px");
+  setThemeCssVar("--theme-eyebrow-size", bumpThemeFontSize(enabled ? typography["label-uppercase"]?.fontSize : "", "10px"));
   setThemeCssVar("--theme-eyebrow-letter-spacing", enabled ? (typography["label-uppercase"]?.letterSpacing || "0.1em") : "0.1em");
-  setThemeCssVar("--theme-title-xl-size", enabled ? (typography["display-lg"]?.fontSize || "clamp(1.55rem, 6.4vw, 2.8rem)") : "clamp(1.55rem, 6.4vw, 2.8rem)");
+  setThemeCssVar("--theme-title-xl-size", bumpThemeFontSize(enabled ? typography["display-lg"]?.fontSize : "", "clamp(1.55rem, 6.4vw, 2.8rem)"));
   setThemeCssVar("--theme-title-xl-line-height", enabled ? (typography["display-lg"]?.lineHeight || "1.02") : "1.02");
   setThemeCssVar("--theme-title-xl-letter-spacing", enabled ? (typography["display-lg"]?.letterSpacing || "-0.03em") : "-0.03em");
-  setThemeCssVar("--theme-title-lg-size", enabled ? (typography["title-lg"]?.fontSize || "clamp(1.22rem, 4.8vw, 1.9rem)") : "clamp(1.22rem, 4.8vw, 1.9rem)");
+  setThemeCssVar("--theme-title-lg-size", bumpThemeFontSize(enabled ? typography["title-lg"]?.fontSize : "", "clamp(1.22rem, 4.8vw, 1.9rem)"));
   setThemeCssVar("--theme-title-lg-line-height", enabled ? (typography["title-lg"]?.lineHeight || "1.1") : "1.1");
   setThemeCssVar("--theme-title-lg-letter-spacing", enabled ? (typography["title-lg"]?.letterSpacing || "-0.02em") : "-0.02em");
-  setThemeCssVar("--theme-body-md-size", enabled ? (typography["body-md"]?.fontSize || "0.93rem") : "0.93rem");
+  setThemeCssVar("--theme-body-md-size", bumpThemeFontSize(enabled ? typography["body-md"]?.fontSize : "", "0.93rem"));
   setThemeCssVar("--theme-body-md-line-height", enabled ? (typography["body-md"]?.lineHeight || "1.45") : "1.45");
-  setThemeCssVar("--theme-button-size", enabled ? (typography.button?.fontSize || "0.92rem") : "0.92rem");
+  setThemeCssVar("--theme-button-size", bumpThemeFontSize(enabled ? typography.button?.fontSize : "", "0.92rem"));
   setThemeCssVar("--theme-button-letter-spacing", enabled ? (typography.button?.letterSpacing || "0") : "0");
-  setThemeCssVar("--theme-button-ghost-size", enabled ? (typography.button?.fontSize || "0.88rem") : "0.88rem");
-  setThemeCssVar("--theme-question-size", enabled ? (typography["title-md"]?.fontSize || "clamp(1.05rem, 4.1vw, 1.45rem)") : "clamp(1.05rem, 4.1vw, 1.45rem)");
+  setThemeCssVar("--theme-button-ghost-size", bumpThemeFontSize(enabled ? typography.button?.fontSize : "", "0.88rem"));
+  setThemeCssVar("--theme-question-size", bumpThemeFontSize(enabled ? typography["title-md"]?.fontSize : "", "clamp(1.05rem, 4.1vw, 1.45rem)"));
   setThemeCssVar("--theme-question-line-height", enabled ? (typography["title-md"]?.lineHeight || "1.38") : "1.38");
   setThemeCssVar("--theme-question-letter-spacing", enabled ? (typography["title-md"]?.letterSpacing || "-0.02em") : "-0.02em");
 }
@@ -518,8 +552,95 @@ function createEmptyRecord(userId) {
     plan: {
       suggestions: [],
       chat: []
-    }
+    },
+    researchUsage: createEmptyResearchUsage()
   };
+}
+
+function createEmptyResearchUsage() {
+  return {
+    version: 1,
+    sessions: []
+  };
+}
+
+function ensureResearchUsage(record = state.currentRecord) {
+  if (!record) {
+    return null;
+  }
+  if (!record.researchUsage || typeof record.researchUsage !== "object") {
+    record.researchUsage = createEmptyResearchUsage();
+  }
+  if (!Array.isArray(record.researchUsage.sessions)) {
+    record.researchUsage.sessions = [];
+  }
+  let session = record.researchUsage.sessions.find((item) => item.sessionId === RESEARCH_SESSION_ID);
+  if (!session) {
+    session = {
+      sessionId: RESEARCH_SESSION_ID,
+      app: "main",
+      connectedAt: RESEARCH_SESSION_STARTED_AT,
+      lastActivityAt: RESEARCH_SESSION_STARTED_AT,
+      durationMs: 0,
+      activities: []
+    };
+    record.researchUsage.sessions.push(session);
+  }
+  if (!Array.isArray(session.activities)) {
+    session.activities = [];
+  }
+  return session;
+}
+
+function updateResearchSessionDuration(record = state.currentRecord) {
+  const session = ensureResearchUsage(record);
+  if (!session) {
+    return null;
+  }
+  const now = new Date();
+  session.lastActivityAt = now.toISOString();
+  session.durationMs = Math.max(0, now.getTime() - new Date(session.connectedAt).getTime());
+  return session;
+}
+
+function trackResearchActivity(action, details = {}, record = state.currentRecord) {
+  const session = updateResearchSessionDuration(record);
+  if (!session) {
+    return;
+  }
+  session.activities.push({
+    at: session.lastActivityAt,
+    action,
+    route: state.route,
+    ...details
+  });
+}
+
+function persistResearchUsageOnExit() {
+  if (!state.currentRecord?.fileName) {
+    return;
+  }
+  updateResearchSessionDuration();
+  const body = JSON.stringify({
+    fileName: state.currentRecord.fileName,
+    data: buildPersistedRecord(state.currentRecord)
+  });
+  navigator.sendBeacon("/api/records", new Blob([body], { type: "application/json" }));
+}
+
+function bindResearchUsageLifecycle() {
+  window.setInterval(() => {
+    if (!state.currentRecord || document.visibilityState === "hidden") {
+      return;
+    }
+    persistRecord({ reloadRecords: false }).catch(() => {});
+  }, RESEARCH_HEARTBEAT_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      persistResearchUsageOnExit();
+    }
+  });
+  window.addEventListener("pagehide", persistResearchUsageOnExit);
 }
 
 function createEmptyGameState() {
@@ -578,6 +699,7 @@ function ensureGuestGameRecord() {
   const guestId = `reactivity-${makeTimestamp(new Date())}`;
   state.currentRecord = createEmptyRecord(guestId);
   state.currentRecord.currentStep = "game";
+  trackResearchActivity("guest_record_created", { destination: "game" });
   ensureGameState();
   persistRecord().catch((error) => setStatus(error.message));
 }
@@ -642,6 +764,7 @@ async function syncCurrentStep(route) {
   }
 
   state.currentRecord.currentStep = route;
+  trackResearchActivity("step_changed", { destination: route });
   if (route === "plan") {
     state.currentRecord.completedPlanOnce = true;
   }
@@ -980,6 +1103,7 @@ function buildPersistedRecord(record = state.currentRecord) {
     dtx: record.dtx || null,
     planGame: record.planGame || null,
     tutorials: record.tutorials || null,
+    researchUsage: record.researchUsage || createEmptyResearchUsage(),
     completedPlanOnce: Boolean(record.completedPlanOnce || record.currentStep === "plan" || record.plan?.suggestions?.length)
   };
 }
@@ -996,10 +1120,19 @@ function renderTopbarActions() {
 
   topbarActions.innerHTML = `
     ${shouldShowHubButton ? `<button class="button-ghost topbar-button" type="button" id="topbar-hub-button">허브로 가기</button>` : ""}
+    <a class="button-ghost topbar-button" href="/map" target="_blank" rel="noopener noreferrer">서비스지도</a>
     <button class="button-ghost topbar-button" type="button" id="open-json-modal">기록</button>
   `;
 
-  topbarActions.querySelector("#topbar-hub-button")?.addEventListener("click", () => {
+  topbarActions.querySelector("#topbar-hub-button")?.addEventListener("click", async () => {
+    if (state.route === "dtx") {
+      try {
+        await refreshCurrentRecord();
+      } catch (error) {
+        setStatus(error.message);
+        return;
+      }
+    }
     navTo("hub");
   });
 
@@ -1038,16 +1171,24 @@ async function openJsonModal() {
   render();
 }
 
+async function refreshCurrentRecord() {
+  if (!state.currentRecord?.fileName) {
+    return;
+  }
+  state.currentRecord = await api(`/api/records/${encodeURIComponent(state.currentRecord.fileName)}`);
+}
+
 function closeJsonModal() {
   state.showJsonModal = false;
   render();
 }
 
-async function persistRecord() {
+async function persistRecord(options = {}) {
   if (!state.currentRecord) {
     return;
   }
 
+  updateResearchSessionDuration();
   state.currentRecord.updatedAt = new Date().toISOString();
   const payload = buildPersistedRecord(state.currentRecord);
   await api("/api/records", {
@@ -1058,7 +1199,9 @@ async function persistRecord() {
       data: payload
     })
   });
-  await loadRecords();
+  if (options.reloadRecords !== false) {
+    await loadRecords();
+  }
 }
 
 function setStatus(message) {
@@ -1103,6 +1246,7 @@ function navTo(route) {
     cleanupGameRuntime();
   }
   state.route = route;
+  trackResearchActivity("route_view", { destination: route });
   render();
 }
 
@@ -1116,6 +1260,7 @@ async function handleCreateId(event) {
   state.isAdvancingDsm = false;
   state.idOnboardingStep = "survey-choice";
   state.showSurveyDifference = false;
+  trackResearchActivity("record_created", { destination: "id" });
   await persistRecord();
   state.records = await api("/api/records");
   setStatus(`${state.currentRecord.fileName} 생성 완료`);
@@ -1124,6 +1269,7 @@ async function handleCreateId(event) {
 
 async function handleLoadRecord(fileName) {
   state.currentRecord = await api(`/api/records/${fileName}`);
+  trackResearchActivity("record_loaded", { fileName });
   const normalizedLoadedStep = normalizeCurrentStep(state.currentRecord.currentStep || "id");
   const shouldRestorePlanReached = !state.currentRecord.completedPlanOnce
     && getGameState(state.currentRecord)?.status === "completed"
@@ -1152,9 +1298,7 @@ async function handleLoadRecord(fileName) {
   state.isAdvancingDsm = false;
   state.asrsIndex = Math.min(getAsrsAnswers(state.currentRecord).length, state.configs.asrs.questions.length - 1);
   state.dsmIndex = Math.min(getDsmAnswers(state.currentRecord).length, state.configs.dsm.questions.length - 1);
-  if (shouldRestorePlanReached) {
-    await persistRecord();
-  }
+  await persistRecord();
   setStatus(`${fileName} 불러오기 완료`);
   let nextRoute = normalizeCurrentStep(state.currentRecord.currentStep || "id");
   if (nextRoute === "game" && hasCompletedReactivity(state.currentRecord) && !state.currentRecord.report) {
@@ -1455,12 +1599,25 @@ function buildGoNoGoPracticeTrials() {
   ];
 }
 
+function getClientDeviceProfile() {
+  const userAgent = navigator.userAgent || "";
+  const platform = navigator.platform || "";
+  const maxTouchPoints = Number(navigator.maxTouchPoints || 0);
+  const isMobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+  const isIPadDesktopMode = platform === "MacIntel" && maxTouchPoints > 1;
+  const isMobileLike = isMobileUserAgent || isIPadDesktopMode;
+
+  return {
+    isMobileLike,
+    hasTouchInput: maxTouchPoints > 0 || "ontouchstart" in window
+  };
+}
+
 function detectBalanceInputOptions() {
-  const isLikelyMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "")
-    || Number(navigator.maxTouchPoints || 0) > 1;
-  const supportsDeviceMotion = isLikelyMobile
+  const device = getClientDeviceProfile();
+  const supportsDeviceMotion = device.isMobileLike
     && (typeof window.DeviceMotionEvent !== "undefined" || typeof window.DeviceOrientationEvent !== "undefined");
-  const supportsTouchFallback = "ontouchstart" in window || Number(navigator.maxTouchPoints || 0) > 0;
+  const supportsTouchFallback = device.isMobileLike && device.hasTouchInput;
   return {
     supportsDeviceMotion,
     supportsTouchFallback,
@@ -1500,9 +1657,6 @@ async function startGameFlow() {
   ensureGuestGameRecord();
   const game = getGameState();
   if (game.status === "completed") {
-    if (state.aiStatus?.configured) {
-      await ensureReactivityAnalysis().catch((error) => setStatus(error.message));
-    }
     await syncCurrentStep("report");
     navTo("report");
     await ensureInsights();
@@ -1512,6 +1666,7 @@ async function startGameFlow() {
   game.startedAt = game.startedAt || new Date().toISOString();
   game.currentTestKey = GAME_ORDER[game.currentTestIndex] || GAME_ORDER[0];
   state.currentRecord.currentStep = "game";
+  trackResearchActivity("reactivity_started", { test: game.currentTestKey });
   await persistRecord();
   if (game.currentTestKey === "signal_detection") {
     showSignalDetectionInstruction();
@@ -1539,6 +1694,7 @@ async function selectGameTest(testKey) {
     activeTestKey: testKey,
     progressPercent: (targetIndex / GAME_ORDER.length) * 100
   };
+  trackResearchActivity("reactivity_test_selected", { test: testKey });
   await persistRecord();
   if (testKey === "signal_detection") {
     showSignalDetectionInstruction();
@@ -1599,6 +1755,7 @@ function completeCurrentGameTest(result) {
   const game = getGameState();
   game.tests[game.currentTestKey] = result;
   game.status = "running";
+  trackResearchActivity("reactivity_test_completed", { test: game.currentTestKey });
 
   const nextIndex = GAME_ORDER.indexOf(game.currentTestKey) + 1;
   const nextTestKey = GAME_ORDER[nextIndex] || null;
@@ -1618,6 +1775,7 @@ function completeCurrentGameTest(result) {
   game.completedAt = new Date().toISOString();
   game.summary = summarizeReactivity();
   state.currentRecord.reactivityAnalysis = buildLocalReactivityAnalysis(state.currentRecord);
+  trackResearchActivity("reactivity_completed");
   persistRecord().catch((error) => setStatus(error.message));
   renderGameUi({
     phase: "completed",
@@ -1630,9 +1788,6 @@ function completeCurrentGameTest(result) {
 async function goToNextGameTest() {
   const game = getGameState();
   if (game.status === "completed") {
-    if (state.aiStatus?.configured) {
-      await ensureReactivityAnalysis().catch((error) => setStatus(error.message));
-    }
     await syncCurrentStep("report");
     navTo("report");
     await ensureInsights();
@@ -2278,6 +2433,12 @@ function handleGoNoGoTap() {
   }
 }
 
+function preventGameCallout(event) {
+  if (event.cancelable) {
+    event.preventDefault();
+  }
+}
+
 function attachLongTouchBalanceListeners() {
   const getLongTouchPosition = (touch) => {
     const target = document.querySelector(".balance-target");
@@ -2636,6 +2797,7 @@ async function answerAsrs(value) {
     answer: value
   };
   state.currentRecord.currentStep = "asrs";
+  trackResearchActivity("asrs_answered", { questionIndex: state.asrsIndex + 1 });
   state.isAdvancingAsrs = true;
   await persistRecord();
   render();
@@ -2657,9 +2819,9 @@ async function goToNextAsrsQuestion() {
   } else {
     state.showAsrsExamples = false;
     state.currentRecord.currentStep = "asrs-result";
+    trackResearchActivity("asrs_completed");
     await persistRecord();
     state.route = "asrs-result";
-    await ensureAsrsAnalysis();
   }
   state.isAdvancingAsrs = false;
   render();
@@ -2685,6 +2847,7 @@ async function answerDsm(value) {
   };
   state.currentRecord.dsm5Analysis = analyzeDsm(state.currentRecord);
   state.currentRecord.currentStep = "dsm";
+  trackResearchActivity("dsm_answered", { questionIndex: state.dsmIndex + 1 });
   state.isAdvancingDsm = true;
   await persistRecord();
   render();
@@ -2696,9 +2859,9 @@ async function goToNextDsmQuestion() {
     state.dsmIndex += 1;
   } else {
     state.currentRecord.currentStep = "dsm-result";
+    trackResearchActivity("dsm_completed");
     await persistRecord();
     state.route = "dsm-result";
-    await ensureDsmAnalysis();
   }
   state.isAdvancingDsm = false;
   render();
@@ -2743,6 +2906,7 @@ async function generateReportAndPlan() {
     state.currentRecord.report = insights.report;
     state.currentRecord.plan = insights.plan;
     state.currentRecord.currentStep = "report";
+    trackResearchActivity("report_generated");
     await persistRecord();
   } finally {
     state.isGeneratingInsights = false;
@@ -2750,127 +2914,7 @@ async function generateReportAndPlan() {
   }
 }
 
-async function generateAsrsAnalysis() {
-  if (!state.currentRecord) {
-    return;
-  }
-
-  state.isGeneratingAsrsAnalysis = true;
-  render();
-
-  try {
-    const analysis = analyzeAsrs();
-    const result = await api("/api/ai/asrs-analysis", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        record: state.currentRecord,
-        analysis
-      })
-    });
-
-    state.currentRecord.asrsAnalysis = result;
-    await persistRecord();
-  } finally {
-    state.isGeneratingAsrsAnalysis = false;
-    render();
-  }
-}
-
-async function ensureAsrsAnalysis() {
-  if (!state.currentRecord?.asrsAnalysis?.summary && !state.isGeneratingAsrsAnalysis) {
-    await generateAsrsAnalysis();
-  }
-}
-
-async function generateDsmAnalysis() {
-  if (!state.currentRecord) {
-    return;
-  }
-
-  state.isGeneratingDsmAnalysis = true;
-  render();
-
-  try {
-    const analysis = analyzeDsm();
-    if (!state.aiStatus?.configured) {
-      state.currentRecord.dsm5QuickAnalysis = buildLocalDsmQuickAnalysis(state.currentRecord);
-      await persistRecord();
-      return;
-    }
-
-    const result = await api("/api/ai/dsm-analysis", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        record: state.currentRecord,
-        analysis
-      })
-    });
-
-    state.currentRecord.dsm5QuickAnalysis = result;
-    await persistRecord();
-  } finally {
-    state.isGeneratingDsmAnalysis = false;
-    render();
-  }
-}
-
-async function ensureDsmAnalysis() {
-  if (!state.currentRecord?.dsm5QuickAnalysis?.summary && !state.isGeneratingDsmAnalysis) {
-    await generateDsmAnalysis();
-  }
-}
-
-async function generateReactivityAnalysis() {
-  if (!state.currentRecord) {
-    return;
-  }
-
-  state.isGeneratingReactivityAnalysis = true;
-  render();
-
-  try {
-    if (!state.aiStatus?.configured) {
-      state.currentRecord.reactivityAnalysis = buildLocalReactivityAnalysis(state.currentRecord);
-      await persistRecord();
-      return;
-    }
-
-    const analysis = buildLocalReactivityAnalysis(state.currentRecord);
-    const result = await api("/api/ai/react-analysis", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        record: state.currentRecord,
-        analysis
-      })
-    });
-
-    state.currentRecord.reactivityAnalysis = {
-      ...result,
-      source: "ai"
-    };
-    await persistRecord();
-  } finally {
-    state.isGeneratingReactivityAnalysis = false;
-    render();
-  }
-}
-
-async function ensureReactivityAnalysis() {
-  if (state.currentRecord?.reactivityAnalysis?.source !== "ai" && !state.isGeneratingReactivityAnalysis) {
-    await generateReactivityAnalysis();
-  }
-}
-
 async function ensureInsights() {
-  if (state.currentRecord && state.aiStatus?.configured) {
-    const game = getGameState(state.currentRecord);
-    if (game?.status === "completed" && state.currentRecord?.reactivityAnalysis?.source !== "ai") {
-      await ensureReactivityAnalysis();
-    }
-  }
   if (!state.currentRecord?.report || state.currentRecord.report.schemaVersion !== 2 || !state.currentRecord?.plan?.suggestions?.length) {
     setStatus("Gemini로 리포트와 계획을 생성하는 중입니다.");
     await generateReportAndPlan();
@@ -2901,6 +2945,7 @@ async function forceRegenerateInsights() {
   state.currentRecord.report = null;
   state.currentRecord.plan = { suggestions: [], chat: [] };
   state.currentRecord.currentStep = "report";
+  trackResearchActivity("report_regeneration_requested");
   await persistRecord();
   state.route = "report";
   await generateReportAndPlan();
@@ -2925,6 +2970,7 @@ async function retakeAssessment(type) {
     state.asrsIndex = 0;
     state.showAsrsExamples = false;
     state.currentRecord.currentStep = "asrs";
+    trackResearchActivity("assessment_retake_started", { assessment: "asrs" });
     await persistRecord();
     navTo("asrs");
     return;
@@ -2936,6 +2982,7 @@ async function retakeAssessment(type) {
     state.currentRecord.dsm5QuickAnalysis = null;
     state.dsmIndex = 0;
     state.currentRecord.currentStep = "dsm";
+    trackResearchActivity("assessment_retake_started", { assessment: "dsm" });
     await persistRecord();
     navTo("dsm");
     return;
@@ -2946,6 +2993,7 @@ async function retakeAssessment(type) {
     state.currentRecord.reactivityAnalysis = null;
     resetGameUi();
     state.currentRecord.currentStep = "game";
+    trackResearchActivity("assessment_retake_started", { assessment: "reactivity" });
     await persistRecord();
     navTo("game");
   }
@@ -2995,6 +3043,10 @@ function buildCompletedGameUi(record = state.currentRecord) {
 async function openReviewRoute(routeKey) {
   if (!state.currentRecord) {
     return;
+  }
+
+  if (state.route === "dtx") {
+    await refreshCurrentRecord();
   }
 
   const targetRoute = routeKey === "asrs"
@@ -3277,6 +3329,55 @@ function renderHubTrendChart() {
   `;
 }
 
+function buildLocalBurdenPattern(metrics) {
+  const threshold = 50;
+  const subjectiveBurdenScore = metrics.hasAsrsSurvey
+    ? Math.min(100, roundTo((Number(metrics.asrsPositiveCount || 0) / 6) * 100, 1))
+    : metrics.hasDsmSurvey
+      ? Math.min(100, roundTo((Number(metrics.dsmYesCount || 0) / 18) * 100, 1))
+      : null;
+  const performanceScores = [
+    Number(metrics.signalScore),
+    Number(metrics.goNoGoScore),
+    Number(metrics.balanceScore)
+  ].filter(Number.isFinite);
+  const performanceBurdenScore = performanceScores.length
+    ? roundTo(clamp(100 - (performanceScores.reduce((sum, value) => sum + value, 0) / performanceScores.length), 0, 100), 1)
+    : null;
+  const subjectiveHigh = Number(subjectiveBurdenScore) >= threshold;
+  const performanceHigh = Number(performanceBurdenScore) >= threshold;
+
+  let type = "낮은 신호형";
+  let summary = "자가부담과 수행부담이 모두 낮은 편입니다.";
+  let guidance = "현재 결과만 보면 비교적 안정적인 흐름으로 볼 수 있지만, 이 결과만으로 단정하지 않고 수면, 스트레스, 환경 변화에 따른 차이를 함께 살펴보는 것이 좋습니다.";
+
+  if (subjectiveHigh && performanceHigh) {
+    type = "수렴형 어려움형";
+    summary = "자가부담과 수행부담이 모두 높게 나타난 패턴입니다.";
+    guidance = "스스로 느끼는 어려움과 과제 수행 신호가 같은 방향으로 모이므로, 어려움이 일상에서 지속된다면 추가 전문가 평가가 도움이 될 수 있습니다.";
+  } else if (subjectiveHigh && !performanceHigh) {
+    type = "주관적 어려움 우세형";
+    summary = "자가부담은 높지만 수행부담은 상대적으로 낮게 나타난 패턴입니다.";
+    guidance = "과제 상황에서는 비교적 안정적이더라도 생활 장면의 부담이 클 수 있으므로, 실제 생활 맥락과 기능 손상 여부를 함께 확인하는 것이 필요합니다.";
+  } else if (!subjectiveHigh && performanceHigh) {
+    type = "수행 불안정성 우세형";
+    summary = "자가부담은 낮지만 수행부담이 상대적으로 높게 나타난 패턴입니다.";
+    guidance = "스스로 체감하는 어려움은 크지 않아도 과제 수행에서 흔들림이 보일 수 있으므로, 수면, 피로, 긴장도, 과제 이해 여부를 함께 확인하는 것이 좋습니다.";
+  }
+
+  return {
+    type,
+    summary,
+    guidance,
+    subjectiveBurdenScore,
+    performanceBurdenScore,
+    threshold,
+    subjectiveLevel: subjectiveHigh ? "높음" : "낮음",
+    performanceLevel: performanceHigh ? "높음" : "낮음",
+    note: "자가부담은 설문 응답을 0-100점으로 환산하고, 수행부담은 반응성 과제 수행 점수의 평균을 100점에서 뺀 값입니다."
+  };
+}
+
 function computeLocalReportViewModel(record = state.currentRecord) {
   const report = record?.report || {};
   const asrs = analyzeAsrs(record);
@@ -3340,6 +3441,15 @@ function computeLocalReportViewModel(record = state.currentRecord) {
     || (alignment === "일치"
       ? `설문과 반응성 과제 모두 ${subjectiveDomainLabel} 쪽 패턴이 비슷하게 나타났어요. 현재 패턴을 이해하고 생활 리듬에 맞는 조절 전략을 더해보면 도움이 될 수 있어요.`
       : "설문에서 느끼는 어려움과 게임 기반 반응 패턴이 조금 다르게 보였어요. 상황과 환경에 따라 수행 모습이 달라질 수 있다는 참고 신호로 볼 수 있어요.");
+  const localBurdenPattern = buildLocalBurdenPattern({
+    hasAsrsSurvey,
+    hasDsmSurvey,
+    asrsPositiveCount: asrs.totalPositive,
+    dsmYesCount: dsm.inattentionYes + dsm.hyperactivityYes,
+    signalScore: hasStoredNumber(signal.score) ? Number(signal.score) : null,
+    goNoGoScore: hasStoredNumber(goNogo.score) ? Number(goNogo.score) : null,
+    balanceScore: hasStoredNumber(game?.tests?.balance_hold?.score) ? Number(game.tests.balance_hold.score) : null
+  });
 
   return {
     severity: report.severity || (asrs.totalPositive >= 4 || dsm.inattentionYes >= 6 || dsm.hyperactivityYes >= 6 ? "높음" : asrs.totalPositive >= 2 ? "중간" : "낮음"),
@@ -3347,7 +3457,7 @@ function computeLocalReportViewModel(record = state.currentRecord) {
       badges: Array.isArray(report.hero?.badges) && report.hero.badges.length ? report.hero.badges : defaultBadges.slice(0, 3),
       summary: heroSummary
     },
-    crossCheck: {
+	    crossCheck: {
       subjectiveTitle: report.crossCheck?.subjectiveTitle || `${surveyLabel}에서는 ${subjectiveDomainLabel} 쪽 부담이 더 보여요`,
       subjectiveText: report.crossCheck?.subjectiveText || (subjectiveDomain === "부주의"
         ? `${surveyLabel} 응답에서는 집중 유지, 시작 지연, 마감 관리와 같은 어려움이 조금 더 강조됐어요.`
@@ -3357,11 +3467,15 @@ function computeLocalReportViewModel(record = state.currentRecord) {
         ? "반응성 과제에서는 목표를 놓치거나 반응시간이 흔들리는 패턴이 상대적으로 더 보였어요."
         : "반응성 과제에서는 누르면 안 되는 자극에 반응하는 패턴이 상대적으로 더 보였어요."),
       alignmentLabel: report.crossCheck?.alignmentLabel || (alignment === "일치" ? "두 결과가 비슷해요" : "두 결과가 조금 달라요"),
-      alignmentSummary: report.crossCheck?.alignmentSummary || (alignment === "일치"
-        ? "스스로 느끼는 어려움과 과제에서 보인 패턴이 같은 방향을 가리켜요."
-        : "평소 체감과 과제 상황의 반응이 다르게 나타나서 환경 영향까지 함께 볼 필요가 있어요.")
-    },
-    profile: {
+	      alignmentSummary: report.crossCheck?.alignmentSummary || (alignment === "일치"
+	        ? "스스로 느끼는 어려움과 과제에서 보인 패턴이 같은 방향을 가리켜요."
+	        : "평소 체감과 과제 상황의 반응이 다르게 나타나서 환경 영향까지 함께 볼 필요가 있어요.")
+	    },
+	    burdenPattern: {
+	      ...(report.burdenPattern || {}),
+	      ...localBurdenPattern
+	    },
+	    profile: {
       inattentionSummary: report.profile?.inattentionSummary || `집중 유지 영역은 ${surveyLabel} 응답과 목표 놓침, 반응시간 변동성을 함께 봤을 때 현재 집중 유지의 일관성을 점검해 볼 필요가 있어 보여요.`,
       impulsivitySummary: report.profile?.impulsivitySummary || `반응 조절 영역은 ${surveyLabel} 응답과 잘못된 반응 비율, 성급 반응 비율을 함께 봤을 때 속도보다 멈추는 조절을 연습하는 것이 도움이 될 수 있어요.`
     },
@@ -3448,6 +3562,7 @@ async function sendPlanChat(event) {
   }
 
   state.currentRecord.currentStep = "plan";
+  trackResearchActivity("plan_chat_submitted");
   await persistRecord();
   form.reset();
   render();
@@ -3475,29 +3590,13 @@ function render() {
 
 function isAiAnswerPending() {
   const route = state.route;
-  const asrsPending = route === "asrs-result"
-    && Boolean(state.aiStatus?.configured)
-    && !state.currentRecord?.asrsAnalysis?.summary;
-  const dsmPending = route === "dsm-result"
-    && Boolean(state.aiStatus?.configured)
-    && !state.currentRecord?.dsm5QuickAnalysis?.summary;
-  const reactivityPending = route === "game"
-    && state.gameUi?.phase === "completed"
-    && Boolean(state.aiStatus?.configured)
-    && state.currentRecord?.reactivityAnalysis?.source !== "ai";
   const insightsPending = state.isGeneratingInsights
     || ((route === "report" || route === "plan")
       && (!state.currentRecord?.report
         || state.currentRecord.report.schemaVersion !== 2
         || !state.currentRecord?.plan?.suggestions?.length));
 
-  return state.isGeneratingAsrsAnalysis
-    || state.isGeneratingDsmAnalysis
-    || state.isGeneratingReactivityAnalysis
-    || asrsPending
-    || dsmPending
-    || reactivityPending
-    || insightsPending;
+  return insightsPending;
 }
 
 function renderAiPendingModal() {
@@ -3556,7 +3655,7 @@ function renderNav() {
 }
 
 function renderSignalStimulus(stimulus, visible) {
-  const imageSrc = withReplayToken(stimulus?.imageSrc || SIGNAL_TARGET_IMAGE, state.gameUi?.stimulusReplayToken);
+  const imageSrc = stimulus?.imageSrc || SIGNAL_TARGET_IMAGE;
   const feedbackState = state.gameUi?.signalFeedbackState || "idle";
   const feedbackSrc = SIGNAL_FEEDBACK_IMAGES[feedbackState] || SIGNAL_FEEDBACK_IMAGES.idle;
   const responseWindowState = state.gameUi?.responseWindowState || "visible";
@@ -3577,18 +3676,19 @@ function renderSignalStimulus(stimulus, visible) {
 }
 
 function renderGoNoGoStimulus(stimulus, visible) {
-  const imageSrc = withReplayToken(stimulus?.imageSrc || GO_NOGO_STIMULUS_IMAGES.go, state.gameUi?.stimulusReplayToken);
   const feedbackState = state.gameUi?.stage === "practice" ? (state.gameUi?.goNoGoFeedbackState || "idle") : null;
   const feedbackSrc = feedbackState ? (GO_NOGO_FEEDBACK_IMAGES[feedbackState] || GO_NOGO_FEEDBACK_IMAGES.idle) : "";
   const responseWindowState = state.gameUi?.responseWindowState || "visible";
   const isPending = !visible && responseWindowState === "pending";
+  const stimulusType = stimulus?.stimulusType === "nogo" ? "nogo" : "go";
+  const symbol = stimulusType === "nogo" ? "X" : "O";
   return `
     <div class="go-nogo-interaction-surface" data-go-nogo-surface>
       <div class="go-nogo-scene ${isPending ? "pending-window" : ""}" data-go-nogo-scene role="button" tabindex="0" aria-label="멈춤 버튼 과제 영역">
         <div class="go-nogo-stage-backdrop" aria-hidden="true"></div>
         ${feedbackState ? `<img class="go-nogo-feedback-layer visible is-${feedbackState}" src="${feedbackSrc}" alt="" aria-hidden="true" draggable="false">` : ""}
         <div class="go-nogo-stimulus-shell">
-          <img class="go-nogo-stimulus-image" src="${imageSrc}" alt="" draggable="false">
+          ${visible ? `<div class="go-nogo-symbol is-${stimulusType}" aria-hidden="true">${symbol}</div>` : ""}
         </div>
       </div>
     </div>
@@ -3698,19 +3798,9 @@ function renderGamePage() {
   const meta = GAME_META[ui.activeTestKey || game.currentTestKey];
   const completedCount = GAME_ORDER.filter((key) => game.tests[key]).length;
   const progressPercent = clamp(ui.progressPercent ?? ((completedCount / GAME_ORDER.length) * 100), 0, 100);
-  const fallbackReactivityAnalysis = ui.phase === "completed"
+  const reactivityAnalysis = ui.phase === "completed"
     ? buildLocalReactivityAnalysis(state.currentRecord)
     : null;
-  const reactivityAnalysis = ui.phase === "completed"
-    ? (state.currentRecord?.reactivityAnalysis || fallbackReactivityAnalysis)
-    : null;
-  const hasReactivityAiResult = state.currentRecord?.reactivityAnalysis?.source === "ai";
-
-  if (ui.phase === "completed" && state.aiStatus?.configured && !hasReactivityAiResult && !state.isGeneratingReactivityAnalysis) {
-    window.setTimeout(() => {
-      ensureReactivityAnalysis().catch((error) => setStatus(error.message));
-    }, 0);
-  }
 
   if (ui.phase === "instruction" && ui.activeTestKey === "signal_detection") {
     return `
@@ -3857,10 +3947,10 @@ function renderGamePage() {
         ${ui.phase === "completed" ? `
           <div class="panel stack-md">
             <div class="eyebrow">summary</div>
-            <p class="muted">${reactivityAnalysis?.inattention || fallbackReactivityAnalysis?.inattention || ""}</p>
-            <p class="muted">${reactivityAnalysis?.impulsivity || fallbackReactivityAnalysis?.impulsivity || ""}</p>
-            <p class="muted">${reactivityAnalysis?.hyperactivity || fallbackReactivityAnalysis?.hyperactivity || ""}</p>
-            <p class="muted">${reactivityAnalysis?.guidance || fallbackReactivityAnalysis?.guidance || ""}</p>
+            <p class="muted">${reactivityAnalysis?.inattention || ""}</p>
+            <p class="muted">${reactivityAnalysis?.impulsivity || ""}</p>
+            <p class="muted">${reactivityAnalysis?.hyperactivity || ""}</p>
+            <p class="muted">${reactivityAnalysis?.guidance || ""}</p>
           </div>
         ` : ""}
         <button class="button-secondary safe-bottom-actions ${ui.phase === "completed" ? "reactivity-start-button" : ""}" id="game-next-button">${nextLabel}</button>
@@ -3908,11 +3998,13 @@ const pages = {
             <span class="eyebrow">focus self check</span>
             <h2 class="title-xl">ADDFCS.COM</h2>
             <p class="muted">애드와 함께 주의·집중·실행 기능 패턴을 정리하는 자기점검 도구</p>
+            <a class="intro-paper-link" href="https://doi.org/10.31234/osf.io/cht4j_v1" target="_blank" rel="noopener noreferrer">연구 논문 확인하기</a>
           </div>
           <img class="entry-sticker" src="${state.introImageSrc}" alt="자가점검 예시 이미지" />
         </div>
 
         <div class="entry-actions intro-actions">
+          <p class="intro-project-notice">연세대학교 심리과학이노베이션대학원 수업 프로젝트로 제작되었습니다.<br />개인을 직접 식별할 수 없는 데이터가 AI를 통한 분석, 서비스 개선 및 연구 목적으로 활용될 수 있습니다.</p>
           <button class="button-secondary" type="button" id="intro-start-button">내 패턴 확인하기</button>
           <button class="button-ghost" type="button" id="intro-continue-button">이어서 하기</button>
           <p class="muted">의학적 진단이 아니라 일상 패턴을 이해하기 위한 참고용 안내로만 사용해 주세요.</p>
@@ -4171,21 +4263,13 @@ const pages = {
   "asrs-result"() {
     const analysis = analyzeAsrs();
     const postSurveyAction = getPostSurveyAction(state.currentRecord);
-    if (!state.currentRecord?.asrsAnalysis?.summary && !state.isGeneratingAsrsAnalysis && state.aiStatus?.configured) {
-      window.setTimeout(() => {
-        ensureAsrsAnalysis().catch((error) => setStatus(error.message));
-      }, 0);
-    }
     return `
       <section class="page">
         <div class="hero-card stack-lg">
           <div class="eyebrow">간단 점검 요약</div>
-          <p class="muted">${
-            state.currentRecord?.asrsAnalysis?.summary
-              ? state.currentRecord.asrsAnalysis.summary
-              : analysis.isComplete
-                ? analysis.summary
-                : "아직 6문항이 모두 입력되지는 않았어요. 지금까지의 응답만 기준으로 가볍게 보여드릴게요."
+          <p class="muted">${analysis.isComplete
+            ? analysis.summary
+            : "아직 6문항이 모두 입력되지는 않았어요. 지금까지의 응답만 기준으로 가볍게 보여드릴게요."
           }</p>
         </div>
 
@@ -4219,9 +4303,9 @@ const pages = {
 
         <div class="panel stack-md">
           <div class="eyebrow">쉽게 풀어보면</div>
-          <p class="muted">${state.currentRecord?.asrsAnalysis?.attention || analysis.attentionMessage}</p>
-          <p class="muted">${state.currentRecord?.asrsAnalysis?.hyperactivity || analysis.hyperMessage}</p>
-          <p class="muted">${state.currentRecord?.asrsAnalysis?.guidance || analysis.guidance}</p>
+          <p class="muted">${analysis.attentionMessage}</p>
+          <p class="muted">${analysis.hyperMessage}</p>
+          <p class="muted">${analysis.guidance}</p>
         </div>
 
         <div class="result-next-actions safe-bottom-actions">
@@ -4234,12 +4318,7 @@ const pages = {
   "dsm-result"() {
     const analysis = analyzeDsm();
     const postSurveyAction = getPostSurveyAction(state.currentRecord);
-    const quickAnalysis = state.currentRecord?.dsm5QuickAnalysis || buildLocalDsmQuickAnalysis(state.currentRecord);
-    if (!state.currentRecord?.dsm5QuickAnalysis?.summary && !state.isGeneratingDsmAnalysis && state.aiStatus?.configured) {
-      window.setTimeout(() => {
-        ensureDsmAnalysis().catch((error) => setStatus(error.message));
-      }, 0);
-    }
+    const quickAnalysis = buildLocalDsmQuickAnalysis(state.currentRecord);
     return `
       <section class="page">
         <div class="hero-card stack-lg">
@@ -4359,9 +4438,9 @@ const pages = {
           </div>
         </div>
 
-        <div class="panel stack-md">
-          <div class="eyebrow">subjective vs objective</div>
-          <div class="grid-2">
+	        <div class="panel stack-md">
+	          <div class="eyebrow">subjective vs objective</div>
+	          <div class="grid-2">
             <div class="metric-card stack-sm">
               <span class="eyebrow">카드 A · 내가 느끼는 일상</span>
               <strong>${report.crossCheck.subjectiveTitle}</strong>
@@ -4376,11 +4455,39 @@ const pages = {
           <div class="report-alignment-row">
             <span class="chip chip-success">${report.crossCheck.alignmentLabel}</span>
             <p class="muted">${report.crossCheck.alignmentSummary}</p>
-          </div>
-        </div>
-
-        <div class="panel stack-md">
-          <div class="eyebrow">executive function profile</div>
+	          </div>
+	        </div>
+	
+	        <div class="panel stack-md">
+	          <div class="eyebrow">multi-layered pattern</div>
+	          <div class="metric-card stack-sm">
+	            <div class="flex items-center justify-between gap-4">
+	              <strong>${report.burdenPattern.type}</strong>
+	              <span class="chip">기준 ${report.burdenPattern.threshold}점</span>
+	            </div>
+	            <p class="muted">${report.burdenPattern.summary}</p>
+	            <div class="report-metric-grid">
+	              <div class="report-item">
+	                <div class="flex items-center justify-between gap-4">
+	                  <strong>자가부담</strong>
+	                  <span class="chip">${displayMetric(report.burdenPattern.subjectiveBurdenScore, "점")} · ${report.burdenPattern.subjectiveLevel}</span>
+	                </div>
+	                <div class="progress-bar"><div class="progress-fill" style="width:${report.burdenPattern.subjectiveBurdenScore ?? 0}%"></div></div>
+	              </div>
+	              <div class="report-item">
+	                <div class="flex items-center justify-between gap-4">
+	                  <strong>수행부담</strong>
+	                  <span class="chip">${displayMetric(report.burdenPattern.performanceBurdenScore, "점")} · ${report.burdenPattern.performanceLevel}</span>
+	                </div>
+	                <div class="progress-bar"><div class="progress-fill" style="width:${report.burdenPattern.performanceBurdenScore ?? 0}%"></div></div>
+	              </div>
+	            </div>
+	            <p class="muted">${report.burdenPattern.guidance}</p>
+	          </div>
+	        </div>
+	
+	        <div class="panel stack-md">
+	          <div class="eyebrow">executive function profile</div>
           <div class="report-tab-row">
             <button class="button-ghost ${activeTab === "inattention" ? "report-tab-active" : ""}" type="button" data-report-tab="inattention">집중 유지</button>
             <button class="button-ghost ${activeTab === "impulsivity" ? "report-tab-active" : ""}" type="button" data-report-tab="impulsivity">반응 조절</button>
@@ -4863,9 +4970,20 @@ function bindPageEvents() {
     goToNextGameTest().catch((error) => setStatus(error.message));
   });
 
-  document.querySelector("[data-game-tap='signal_detection']")?.addEventListener("click", () => {
-    handleSignalDetectionTap();
-  });
+  const signalStage = document.querySelector("[data-game-tap='signal_detection']");
+  if (signalStage && state.route === "game" && state.gameUi?.activeTestKey === "signal_detection") {
+    addGameListener(signalStage, "click", () => {
+      handleSignalDetectionTap();
+    });
+    addGameListener(signalStage, "contextmenu", preventGameCallout);
+    addGameListener(signalStage, "selectstart", preventGameCallout);
+    addGameListener(signalStage, "dragstart", preventGameCallout);
+    addGameListener(signalStage, "touchstart", (event) => {
+      preventGameCallout(event);
+      handleSignalDetectionTap();
+    }, { passive: false });
+    addGameListener(signalStage, "touchmove", preventGameCallout, { passive: false });
+  }
 
   const goNoGoScene = document.querySelector("[data-go-nogo-scene]");
   if (goNoGoScene && state.route === "game" && state.gameUi?.activeTestKey === "go_nogo") {
@@ -4891,6 +5009,9 @@ function bindPageEvents() {
         event.preventDefault();
       }
     }, { passive: false });
+    addGameListener(goNoGoScene, "contextmenu", preventGameCallout);
+    addGameListener(goNoGoScene, "selectstart", preventGameCallout);
+    addGameListener(goNoGoScene, "dragstart", preventGameCallout);
   }
 
   const balanceArena = document.querySelector(".balance-arena");

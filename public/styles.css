@@ -22,26 +22,27 @@
   --theme-display-font: "Plus Jakarta Sans", sans-serif;
   --theme-body-font: "Inter", sans-serif;
   --theme-label-font: "Space Grotesk", sans-serif;
-  --theme-brand-title-size: 1.05rem;
+  --main-font-bump: 1.333px;
+  --theme-brand-title-size: calc(1.05rem + var(--main-font-bump));
   --theme-brand-title-letter-spacing: 0.02em;
-  --theme-brand-subtitle-size: 0.54rem;
+  --theme-brand-subtitle-size: calc(0.54rem + var(--main-font-bump));
   --theme-brand-subtitle-letter-spacing: 0.18em;
-  --theme-nav-label-size: 9px;
+  --theme-nav-label-size: calc(9px + var(--main-font-bump));
   --theme-nav-label-letter-spacing: 0.08em;
-  --theme-eyebrow-size: 10px;
+  --theme-eyebrow-size: calc(10px + var(--main-font-bump));
   --theme-eyebrow-letter-spacing: 0.1em;
-  --theme-title-xl-size: clamp(1.55rem, 6.4vw, 2.8rem);
+  --theme-title-xl-size: calc(clamp(1.55rem, 6.4vw, 2.8rem) + var(--main-font-bump));
   --theme-title-xl-line-height: 1.02;
   --theme-title-xl-letter-spacing: -0.03em;
-  --theme-title-lg-size: clamp(1.22rem, 4.8vw, 1.9rem);
+  --theme-title-lg-size: calc(clamp(1.22rem, 4.8vw, 1.9rem) + var(--main-font-bump));
   --theme-title-lg-line-height: 1.1;
   --theme-title-lg-letter-spacing: -0.02em;
-  --theme-body-md-size: 0.93rem;
+  --theme-body-md-size: calc(0.93rem + var(--main-font-bump));
   --theme-body-md-line-height: 1.45;
-  --theme-button-size: 0.92rem;
+  --theme-button-size: calc(0.92rem + var(--main-font-bump));
   --theme-button-letter-spacing: 0;
-  --theme-button-ghost-size: 0.88rem;
-  --theme-question-size: clamp(1.05rem, 4.1vw, 1.45rem);
+  --theme-button-ghost-size: calc(0.88rem + var(--main-font-bump));
+  --theme-question-size: calc(clamp(1.05rem, 4.1vw, 1.45rem) + var(--main-font-bump));
   --theme-question-line-height: 1.38;
   --theme-question-letter-spacing: -0.02em;
   --theme-radius-panel: 1.75rem;
@@ -92,6 +93,7 @@
   --theme-display-font: "Plus Jakarta Sans", "IBM Plex Sans", Helvetica, Arial, sans-serif;
   --theme-body-font: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
   --theme-label-font: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --main-font-bump: 1.333px;
   --theme-radius-panel: 12px;
   --theme-radius-card: 8px;
   --theme-radius-input: 8px;
@@ -107,13 +109,20 @@
   --theme-button-ghost-text: #5741d8;
   --theme-progress-bg: #f0eff7;
   --theme-progress-fill: linear-gradient(90deg, #7132f5, #5741d8);
-  --theme-title-xl-size: 2.25rem;
+  --theme-brand-title-size: calc(1.05rem + var(--main-font-bump));
+  --theme-brand-subtitle-size: calc(0.54rem + var(--main-font-bump));
+  --theme-nav-label-size: calc(9px + var(--main-font-bump));
+  --theme-eyebrow-size: calc(10px + var(--main-font-bump));
+  --theme-body-md-size: calc(0.93rem + var(--main-font-bump));
+  --theme-button-size: calc(0.92rem + var(--main-font-bump));
+  --theme-button-ghost-size: calc(0.88rem + var(--main-font-bump));
+  --theme-title-xl-size: calc(2.25rem + var(--main-font-bump));
   --theme-title-xl-line-height: 1.08;
   --theme-title-xl-letter-spacing: 0;
-  --theme-title-lg-size: 1.25rem;
+  --theme-title-lg-size: calc(1.25rem + var(--main-font-bump));
   --theme-title-lg-line-height: 1.22;
   --theme-title-lg-letter-spacing: 0;
-  --theme-question-size: 1.15rem;
+  --theme-question-size: calc(1.15rem + var(--main-font-bump));
   --theme-question-line-height: 1.42;
   --theme-question-letter-spacing: 0;
 }
@@ -1325,6 +1334,17 @@ body.body-scroll-lock {
   align-content: flex-start;
 }
 
+.game-page,
+.game-stage-card,
+.stimulus-stage,
+.go-nogo-interaction-surface,
+.go-nogo-scene {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
 .signal-instruction-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1489,6 +1509,11 @@ body.body-scroll-lock {
   place-items: center;
   overflow: hidden;
   background: var(--theme-surface-soft);
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 .stimulus-stage.ghost {
@@ -1524,7 +1549,10 @@ body.body-scroll-lock {
   height: 100%;
   object-fit: contain;
   filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.28));
+  pointer-events: none;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   -webkit-user-drag: none;
 }
 
@@ -1557,6 +1585,8 @@ body.body-scroll-lock {
   object-fit: cover;
   pointer-events: none;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   -webkit-user-drag: none;
   display: none;
 }
@@ -1603,8 +1633,52 @@ body.body-scroll-lock {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  pointer-events: none;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   -webkit-user-drag: none;
+}
+
+.go-nogo-symbol {
+  display: grid;
+  place-items: center;
+  width: min(54%, 220px);
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #101114;
+  border: 10px solid currentColor;
+  font-family: var(--theme-display-font);
+  font-size: clamp(5rem, 22vw, 9rem);
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 16px 36px rgba(16, 17, 20, 0.16);
+  animation: go-nogo-drop 500ms linear both;
+  will-change: transform, opacity;
+}
+
+.go-nogo-symbol.is-go {
+  color: #149e61;
+}
+
+.go-nogo-symbol.is-nogo {
+  color: #d93025;
+  border-radius: 18px;
+}
+
+@keyframes go-nogo-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(-58%);
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(58%);
+  }
 }
 
 .go-nogo-placeholder {
@@ -1647,6 +1721,8 @@ body.body-scroll-lock {
   object-fit: cover;
   pointer-events: none;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   -webkit-user-drag: none;
   display: none;
 }
@@ -2314,10 +2390,35 @@ body,
   line-height: 1.5;
 }
 
+.intro-paper-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--theme-hairline);
+  border-radius: var(--theme-radius-button);
+  background: var(--theme-button-ghost-bg);
+  color: var(--theme-button-ghost-text);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
 .intro-actions {
   gap: 8px;
   width: 100%;
   align-items: center;
+  margin-top: -84px;
+}
+
+.intro-project-notice {
+  max-width: 360px;
+  margin: 0 0 4px;
+  color: var(--theme-muted);
+  font-size: 0.72rem;
+  line-height: 1.55;
+  text-align: center;
 }
 
 .intro-actions .button-secondary,
@@ -2614,12 +2715,16 @@ body,
 }
 
 .topbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: var(--topbar-control-height);
   height: var(--topbar-control-height);
   padding: 0 8px;
   border-radius: 10px;
   line-height: 1;
   white-space: nowrap;
+  text-decoration: none;
 }
 
 #app {

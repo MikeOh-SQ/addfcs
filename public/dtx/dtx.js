@@ -6,6 +6,8 @@ const {
   computeStageByScore,
   buildUrl,
   persistRecord,
+  trackActivity,
+  flushResearchUsage,
   api,
   resolveCharacterImage,
   showSpeakerImage
@@ -99,11 +101,13 @@ async function createGuestRecord() {
     }
   };
   ensureDtx(record);
+  trackActivity(record, "record_created", { source: "dtx_guest" });
   await api("/api/records", {
     method: "POST",
     body: JSON.stringify({
       fileName,
-      data: record
+      data: record,
+      writer: "dtx"
     })
   });
   return guestId;
@@ -187,6 +191,7 @@ async function closeEvent() {
   state.activeEventCursor = -1;
   renderHeader();
   if (state.record) {
+    trackActivity(state.record, "forest_event_completed");
     await persistRecord(state.record);
   }
 }
@@ -282,6 +287,10 @@ async function init() {
       if (tutorialKey && state.record && !hasSeenTutorial(state.record, tutorialKey)) {
         url.searchParams.set("tutorial", "1");
       }
+      if (state.record) {
+        trackActivity(state.record, "dtx_activity_opened", { activity: target });
+        flushResearchUsage();
+      }
       window.location.href = url.toString();
     });
   });
@@ -306,6 +315,8 @@ async function init() {
   }
 
   state.record = record;
+  trackActivity(state.record, "page_view", { page: "dtx" });
+  await persistRecord(state.record);
   renderHeader();
   menuView.classList.remove("hidden");
   ensureEventState(state.record);
